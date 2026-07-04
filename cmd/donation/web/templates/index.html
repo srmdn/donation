@@ -45,8 +45,9 @@
 
     <section class="content" aria-label="Projects and timeline">
       <div class="section-heading">
-        <p class="eyebrow">Active work</p>
+        <p class="eyebrow">Featured work</p>
         <h2>Choose where your support goes.</h2>
+        <p class="bio">Home shows six featured projects. Full project archive lives on its own page.</p>
       </div>
 
       <div id="projects" class="project-list">
@@ -69,6 +70,12 @@
           </article>
         {{end}}
       </div>
+
+      {{if gt .ActiveProjectNum 6}}
+        <div class="project-list-actions">
+          <a class="secondary-link inline-action" href="/projects">View all {{.ActiveProjectNum}} projects</a>
+        </div>
+      {{end}}
 
       <section id="timeline" class="timeline-section" aria-label="Live timeline">
         <div class="section-heading compact">

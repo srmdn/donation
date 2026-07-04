@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>All projects - {{.Builder.Name}}</title>
+  <link rel="stylesheet" href="/static/base.css">
+  <link rel="stylesheet" href="/static/public.css">
+</head>
+<body>
+  {{template "site_nav" .}}
+  <main class="projects-shell">
+    <section class="projects-header">
+      <div>
+        <p class="eyebrow">All projects</p>
+        <h1>Funding archive</h1>
+        <p class="bio">Browse all active projects, then choose where your support will have the most impact.</p>
+      </div>
+      <div class="projects-meta">
+        <span>{{.TotalProjects}} active projects</span>
+        <span>Page {{.Page}}</span>
+      </div>
+    </section>
+
+    <section class="projects-index-grid">
+      {{range .Projects}}
+        <article class="project-card accent-{{.Accent}}">
+          <div class="project-topline">
+            <span class="status">{{.Status}}</span>
+            <span class="updated">{{.LastUpdated}}</span>
+          </div>
+          <h3>{{.Title}}</h3>
+          <p>{{.Summary}}</p>
+          <div class="meter" aria-label="{{.Title}} funding progress">
+            <span style="width: {{percent .Raised .Goal}}%"></span>
+          </div>
+          <div class="project-money">
+            <strong>{{rupiah .Raised}}</strong>
+            <span>of {{rupiah .Goal}}</span>
+          </div>
+          <a class="secondary-link" href="/projects/{{.Slug}}">Support {{.Title}}</a>
+        </article>
+      {{end}}
+    </section>
+
+    <nav class="pagination-row" aria-label="Project pages">
+      {{if .HasPrev}}
+        <a class="secondary-link inline-action" href="/projects?page={{.PrevPage}}">Previous</a>
+      {{else}}
+        <span class="pagination-spacer"></span>
+      {{end}}
+
+      {{if .HasNext}}
+        <a class="secondary-link inline-action" href="/projects?page={{.NextPage}}">Next</a>
+      {{else}}
+        <span class="pagination-spacer"></span>
+      {{end}}
+    </nav>
+  </main>
+  {{template "site_footer" .}}
+</body>
+</html>
