@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin login</title>
+  <link rel="stylesheet" href="/static/base.css">
+  <link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+  {{template "site_nav" .}}
+  <main class="center-shell">
+    <section class="admin-auth-panel">
+      <p class="eyebrow">Admin</p>
+      <h1>Sign in</h1>
+      <p class="bio">Use the local admin password from your environment to manage projects.</p>
+
+      {{if .Error}}
+        <p class="form-alert error">{{.Error}}</p>
+      {{end}}
+
+      <form class="admin-auth-form" method="post" action="/admin/login">
+        <label class="field">
+          <span>Password</span>
+          <input name="password" type="password" autocomplete="current-password" required>
+        </label>
+
+        <button class="primary-button" type="submit">Sign in</button>
+      </form>
+    </section>
+  </main>
+  {{template "site_footer" .}}
+</body>
+</html>

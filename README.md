@@ -48,6 +48,21 @@ Override:
 ADDR=127.0.0.1:3000 DB_PATH=data/dev.db go run ./cmd/donation
 ```
 
+Admin defaults:
+
+```txt
+ADMIN_PASSWORD=admin
+ADMIN_SESSION_SECRET=change-me
+```
+
+Pakasir placeholders:
+
+```txt
+PAKASIR_BASE_URL=https://app.pakasir.com
+PAKASIR_API_KEY=
+PAKASIR_MERCHANT_SLUG=
+```
+
 ## Roadmap
 
 - Admin login
@@ -67,3 +82,9 @@ Production payment flow is planned around Pakasir:
 - receive payment webhook
 - verify transaction status
 - mark donation as paid
+
+## Donation Amounts
+
+- Suggested quick amounts start at `Rp25.000`
+- Donors can enter a custom amount
+- Minimum amount is enforced at `Rp25.000`

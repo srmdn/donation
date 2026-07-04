@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin projects</title>
+  <link rel="stylesheet" href="/static/base.css">
+  <link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+  {{template "site_nav" .}}
+  <main class="admin-shell">
+    <header class="admin-header">
+      <div>
+        <p class="eyebrow">Admin</p>
+        <h1>Projects</h1>
+      </div>
+
+      <div class="admin-actions">
+        <div class="admin-stats">
+          <span>{{len .Projects}} total</span>
+          <span>{{.ActiveCount}} active</span>
+        </div>
+        <form method="post" action="/admin/logout">
+          <button class="secondary-button" type="submit">Sign out</button>
+        </form>
+      </div>
+    </header>
+
+    {{if .Error}}
+      <p class="form-alert error">{{.Error}}</p>
+    {{end}}
+    {{if .Notice}}
+      <p class="form-alert notice">{{.Notice}}</p>
+    {{end}}
+
+    <section class="admin-grid">
+      <section class="admin-panel">
+        <div class="section-heading compact admin-panel-head">
+          <div>
+            <p class="eyebrow">Manage</p>
+            <h2>{{if .HasEditing}}Edit project{{else}}Create project{{end}}</h2>
+          </div>
+          {{if .HasEditing}}
+            <a class="ghost-link" href="/admin/projects">New project</a>
+          {{end}}
+        </div>
+
+        <form class="admin-form" method="post" action="{{if .HasEditing}}/admin/projects/{{.Editing.ID}}{{else}}/admin/projects{{end}}">
+          <label class="field">
+            <span>Title</span>
+            <input name="title" value="{{.Editing.Title}}" required>
+          </label>
+
+          <label class="field">
+            <span>Slug</span>
+            <input name="slug" value="{{.Editing.Slug}}" required>
+          </label>
+
+          <label class="field">
+            <span>Summary</span>
+            <textarea name="summary" rows="3" required>{{.Editing.Summary}}</textarea>
+          </label>
+
+          <label class="field">
+            <span>Description</span>
+            <textarea name="description" rows="6" required>{{.Editing.Description}}</textarea>
+          </label>
+
+          <div class="admin-form-grid">
+            <label class="field">
+              <span>Status</span>
+              <input name="status" value="{{if .HasEditing}}{{.Editing.Status}}{{else}}building{{end}}" required>
+            </label>
+
+            <label class="field">
+              <span>Goal</span>
+              <input name="goal" type="number" min="1" value="{{if .HasEditing}}{{.Editing.Goal}}{{else}}1000000{{end}}" required>
+            </label>
+          </div>
+
+          <div class="admin-form-grid">
+            <label class="field">
+              <span>Accent</span>
+              <select name="accent">
+                <option value="green" {{if eq .Editing.Accent "green"}}selected{{end}}>green</option>
+                <option value="gold" {{if eq .Editing.Accent "gold"}}selected{{end}}>gold</option>
+                <option value="stone" {{if eq .Editing.Accent "stone"}}selected{{end}}>stone</option>
+              </select>
+            </label>
+
+            <label class="toggle-field">
+              <input name="is_active" type="checkbox" {{if or (not .HasEditing) .Editing.IsActive}}checked{{end}}>
+              <span>Project is active</span>
+            </label>
+          </div>
+
+          <button class="primary-button" type="submit">{{if .HasEditing}}Save changes{{else}}Create project{{end}}</button>
+        </form>
+      </section>
+
+      <section class="admin-panel">
+        <div class="section-heading compact admin-panel-head">
+          <div>
+            <p class="eyebrow">Current</p>
+            <h2>Project list</h2>
+          </div>
+        </div>
+
+        <div class="admin-table">
+          {{range .Projects}}
+            <article class="admin-row">
+              <div>
+                <div class="admin-row-top">
+                  <strong>{{.Title}}</strong>
+                  <span class="status-pill {{if .IsActive}}active{{else}}inactive{{end}}">{{if .IsActive}}active{{else}}inactive{{end}}</span>
+                </div>
+                <p>{{.Summary}}</p>
+                <div class="admin-row-meta">
+                  <span>{{.Slug}}</span>
+                  <span>{{rupiah .Raised}} / {{rupiah .Goal}}</span>
+                  <span>{{.Status}}</span>
+                </div>
+              </div>
+              <a class="ghost-link" href="/admin/projects?edit={{.ID}}">Edit</a>
+            </article>
+          {{end}}
+        </div>
+      </section>
+    </section>
+  </main>
+  {{template "site_footer" .}}
+</body>
+</html>

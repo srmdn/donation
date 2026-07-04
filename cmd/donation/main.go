@@ -1,12 +1,17 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
 	"embed"
+	"encoding/hex"
 	"errors"
 	"html/template"
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -19,9 +24,13 @@ import (
 //go:embed web/templates/*.html web/static/*
 var assets embed.FS
 
+const minDonationAmount = 25000
+
 func main() {
 	addr := env("ADDR", "127.0.0.1:8094")
 	dbPath := env("DB_PATH", "data/donation.db")
+	adminPassword := env("ADMIN_PASSWORD", "admin")
+	adminSessionSecret := env("ADMIN_SESSION_SECRET", adminPassword)
 	staticFS := mustSubFS(assets, "web/static")
 	db, err := store.Open(dbPath)
 	if err != nil {
@@ -87,13 +96,13 @@ func main() {
 		}
 
 		slug := strings.TrimSpace(r.FormValue("project_slug"))
-		amount, err := strconv.Atoi(strings.TrimSpace(r.FormValue("amount")))
-		if err != nil {
-			http.Error(w, "invalid amount", http.StatusBadRequest)
-			return
-		}
 		if slug == "" {
 			http.Error(w, "missing project", http.StatusBadRequest)
+			return
+		}
+		amount, err := donationAmountFromRequest(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
@@ -135,6 +144,131 @@ func main() {
 			slog.Error("render thanks", "error", err)
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}
+	})
+	mux.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(r, adminSessionSecret) {
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/admin/projects", http.StatusSeeOther)
+	})
+	mux.HandleFunc("GET /admin/login", func(w http.ResponseWriter, r *http.Request) {
+		if isAdmin(r, adminSessionSecret) {
+			http.Redirect(w, r, "/admin/projects", http.StatusSeeOther)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := tmpl.ExecuteTemplate(w, "admin_login.html", app.AdminLoginPageData{
+			Error: strings.TrimSpace(r.URL.Query().Get("error")),
+		}); err != nil {
+			slog.Error("render admin login", "error", err)
+			http.Error(w, "render failed", http.StatusInternalServerError)
+		}
+	})
+	mux.HandleFunc("POST /admin/login", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+
+		password := strings.TrimSpace(r.FormValue("password"))
+		if subtle.ConstantTimeCompare([]byte(password), []byte(adminPassword)) != 1 {
+			http.Redirect(w, r, "/admin/login?error="+url.QueryEscape("Wrong password"), http.StatusSeeOther)
+			return
+		}
+
+		setAdminCookie(w, adminSessionSecret)
+		http.Redirect(w, r, "/admin/projects?notice="+url.QueryEscape("Signed in"), http.StatusSeeOther)
+	})
+	mux.HandleFunc("POST /admin/logout", func(w http.ResponseWriter, r *http.Request) {
+		clearAdminCookie(w)
+		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+	})
+	mux.HandleFunc("GET /admin/projects", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(r, adminSessionSecret) {
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+
+		projects, err := db.ListAllProjects(r.Context())
+		if err != nil {
+			slog.Error("list admin projects", "error", err)
+			http.Error(w, "data load failed", http.StatusInternalServerError)
+			return
+		}
+
+		page := app.AdminProjectsPageData{
+			Projects: projects,
+			Error:    strings.TrimSpace(r.URL.Query().Get("error")),
+			Notice:   strings.TrimSpace(r.URL.Query().Get("notice")),
+		}
+		for _, project := range projects {
+			if project.IsActive {
+				page.ActiveCount++
+			}
+		}
+
+		editID := strings.TrimSpace(r.URL.Query().Get("edit"))
+		if editID != "" {
+			id, err := strconv.ParseInt(editID, 10, 64)
+			if err == nil {
+				project, err := db.FindProjectByID(r.Context(), id)
+				if err == nil {
+					page.Editing = project
+					page.HasEditing = true
+				}
+			}
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := tmpl.ExecuteTemplate(w, "admin_projects.html", page); err != nil {
+			slog.Error("render admin projects", "error", err)
+			http.Error(w, "render failed", http.StatusInternalServerError)
+		}
+	})
+	mux.HandleFunc("POST /admin/projects", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(r, adminSessionSecret) {
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+
+		project, err := projectFromRequest(r)
+		if err != nil {
+			http.Redirect(w, r, "/admin/projects?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+			return
+		}
+		if err := db.CreateProject(r.Context(), project); err != nil {
+			slog.Error("create project", "error", err)
+			http.Redirect(w, r, "/admin/projects?error="+url.QueryEscape("Create failed"), http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/admin/projects?notice="+url.QueryEscape("Project created"), http.StatusSeeOther)
+	})
+	mux.HandleFunc("POST /admin/projects/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(r, adminSessionSecret) {
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid project id", http.StatusBadRequest)
+			return
+		}
+
+		project, err := projectFromRequest(r)
+		if err != nil {
+			http.Redirect(w, r, "/admin/projects?edit="+strconv.FormatInt(id, 10)+"&error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+			return
+		}
+		project.ID = id
+		if err := db.UpdateProject(r.Context(), project); err != nil {
+			slog.Error("update project", "error", err)
+			http.Redirect(w, r, "/admin/projects?edit="+strconv.FormatInt(id, 10)+"&error="+url.QueryEscape("Update failed"), http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/admin/projects?notice="+url.QueryEscape("Project updated"), http.StatusSeeOther)
 	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -180,7 +314,7 @@ func logRequests(next http.Handler) http.Handler {
 
 func rupiah(amount int) string {
 	if amount == 0 {
-		return "Rp0"
+		return "Rp 0"
 	}
 	s := strconv.Itoa(amount)
 	var parts []string
@@ -189,7 +323,7 @@ func rupiah(amount int) string {
 		s = s[:len(s)-3]
 	}
 	parts = append([]string{s}, parts...)
-	return "Rp" + strings.Join(parts, ".")
+	return "Rp " + strings.Join(parts, ".")
 }
 
 func percent(raised, goal int) int {
@@ -205,4 +339,97 @@ func percent(raised, goal int) int {
 
 func eventHasAmount(amount int) bool {
 	return amount > 0
+}
+
+func donationAmountFromRequest(r *http.Request) (int, error) {
+	custom := strings.TrimSpace(r.FormValue("custom_amount"))
+	raw := strings.TrimSpace(r.FormValue("amount"))
+	if custom != "" {
+		raw = custom
+	}
+
+	amount, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, errors.New("invalid amount")
+	}
+	if amount < minDonationAmount {
+		return 0, errors.New("minimum donation is Rp25.000")
+	}
+	return amount, nil
+}
+
+func projectFromRequest(r *http.Request) (app.Project, error) {
+	if err := r.ParseForm(); err != nil {
+		return app.Project{}, errors.New("invalid form")
+	}
+
+	goal, err := strconv.Atoi(strings.TrimSpace(r.FormValue("goal")))
+	if err != nil || goal <= 0 {
+		return app.Project{}, errors.New("goal must be a positive number")
+	}
+
+	project := app.Project{
+		Title:       strings.TrimSpace(r.FormValue("title")),
+		Slug:        strings.TrimSpace(r.FormValue("slug")),
+		Summary:     strings.TrimSpace(r.FormValue("summary")),
+		Description: strings.TrimSpace(r.FormValue("description")),
+		Status:      strings.TrimSpace(r.FormValue("status")),
+		Goal:        goal,
+		Accent:      strings.TrimSpace(r.FormValue("accent")),
+		IsActive:    r.FormValue("is_active") == "on",
+	}
+
+	switch {
+	case project.Title == "":
+		return app.Project{}, errors.New("title is required")
+	case project.Slug == "":
+		return app.Project{}, errors.New("slug is required")
+	case project.Summary == "":
+		return app.Project{}, errors.New("summary is required")
+	case project.Description == "":
+		return app.Project{}, errors.New("description is required")
+	case project.Status == "":
+		return app.Project{}, errors.New("status is required")
+	case project.Accent == "":
+		return app.Project{}, errors.New("accent is required")
+	}
+
+	return project, nil
+}
+
+func isAdmin(r *http.Request, secret string) bool {
+	cookie, err := r.Cookie("admin_session")
+	if err != nil {
+		return false
+	}
+	expected := adminCookieValue(secret)
+	return subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(expected)) == 1
+}
+
+func setAdminCookie(w http.ResponseWriter, secret string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "admin_session",
+		Value:    adminCookieValue(secret),
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   60 * 60 * 24 * 30,
+	})
+}
+
+func clearAdminCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "admin_session",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
+}
+
+func adminCookieValue(secret string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte("admin-session"))
+	return hex.EncodeToString(mac.Sum(nil))
 }

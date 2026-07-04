@@ -4,9 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.Project.Title}} - support {{.Builder.Name}}</title>
-  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/base.css">
+  <link rel="stylesheet" href="/static/public.css">
 </head>
 <body>
+  {{template "site_nav" .}}
   <main class="detail-shell">
     <nav class="top-nav" aria-label="Breadcrumb">
       <a href="/">Back to projects</a>
@@ -44,17 +46,23 @@
           <legend>Suggested amounts</legend>
           <label>
             <input type="radio" name="amount" value="25000" checked>
-            <span>Rp25.000</span>
+            <span>Rp 25.000</span>
           </label>
           <label>
             <input type="radio" name="amount" value="50000">
-            <span>Rp50.000</span>
+            <span>Rp 50.000</span>
           </label>
           <label>
             <input type="radio" name="amount" value="100000">
-            <span>Rp100.000</span>
+            <span>Rp 100.000</span>
           </label>
         </fieldset>
+
+        <label class="field">
+          <span>Custom amount</span>
+          <input name="custom_amount" type="number" min="25000" step="1000" inputmode="numeric" placeholder="25000">
+          <small>Leave empty to use a suggested amount. Minimum donation is Rp25.000.</small>
+        </label>
 
         <label class="field">
           <span>Name</span>
@@ -73,7 +81,7 @@
           <textarea name="message" rows="4" placeholder="Short note for the builder"></textarea>
         </label>
 
-        <button class="primary-button" type="submit">Continue to mock payment</button>
+        <button class="primary-button" type="submit">Continue to payment</button>
       </form>
 
       <aside class="timeline-preview" aria-label="Project timeline">
@@ -101,5 +109,6 @@
       </aside>
     </section>
   </main>
+  {{template "site_footer" .}}
 </body>
 </html>

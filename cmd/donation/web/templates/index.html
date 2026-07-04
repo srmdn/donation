@@ -4,9 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.Builder.Name}} - project support</title>
-  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/base.css">
+  <link rel="stylesheet" href="/static/public.css">
 </head>
 <body>
+  {{template "site_nav" .}}
   <div class="mobile-sticky-bar" aria-label="Quick support">
     <div class="avatar compact" aria-hidden="true">SR</div>
     <div class="mobile-sticky-copy">
@@ -98,5 +100,6 @@
       </section>
     </section>
   </main>
+  {{template "site_footer" .}}
 </body>
 </html>

@@ -4,9 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Donation created</title>
-  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/base.css">
+  <link rel="stylesheet" href="/static/public.css">
 </head>
 <body>
+  {{template "site_nav" .}}
   <main class="center-shell">
     <section class="thanks-panel">
       <p class="eyebrow">Mock payment</p>
@@ -15,5 +17,6 @@
       <a class="primary-link" href="/">Back to builder page</a>
     </section>
   </main>
+  {{template "site_footer" .}}
 </body>
 </html>
