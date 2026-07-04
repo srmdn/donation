@@ -25,6 +25,35 @@ type TimelineEvent struct {
 	Project string
 }
 
+type Donation struct {
+	ID                    int64
+	ProjectID             int64
+	ProjectTitle          string
+	ProjectSlug           string
+	DonorName             string
+	DonorEmail            string
+	Message               string
+	Amount                int
+	Currency              string
+	Status                string
+	Visibility            string
+	IsSpam                bool
+	ModerationNote        string
+	Provider              string
+	ProviderOrderID       string
+	ProviderStatus        string
+	ProviderPaymentURL    string
+	ProviderPaymentMethod string
+	ProviderPaymentNumber string
+	ProviderFee           int
+	ProviderTotalPayment  int
+	ProviderExpiredAt     string
+	ProviderCompletedAt   string
+	PaidAt                string
+	CreatedAt             string
+	UpdatedAt             string
+}
+
 type Builder struct {
 	Name   string
 	Handle string
@@ -70,4 +99,15 @@ type AdminProjectsPageData struct {
 	Error       string
 	Notice      string
 	ActiveCount int
+}
+
+type AdminDonationsPageData struct {
+	Donations    []Donation
+	Error        string
+	Notice       string
+	TotalCount   int
+	PaidCount    int
+	PendingCount int
+	PublicCount  int
+	SpamCount    int
 }

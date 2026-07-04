@@ -23,6 +23,13 @@
   margin-bottom: 28px;
 }
 
+.admin-subnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
 .admin-actions {
   gap: 12px;
 }
@@ -124,12 +131,28 @@
   line-height: 1.5;
 }
 
+.admin-row-actions {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.button-link {
+  min-width: 84px;
+}
+
 .admin-row-meta {
   gap: 12px;
   flex-wrap: wrap;
   margin-top: 12px;
   color: var(--muted);
   font-size: 13px;
+}
+
+.admin-subnav .current {
+  background: var(--accent-soft);
+  border-color: var(--accent-soft);
+  color: var(--accent);
 }
 
 @media (max-width: 860px) {

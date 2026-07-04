@@ -78,7 +78,7 @@ func (s *Store) PageDataWithTimelineLimit(ctx context.Context, limit int) (app.P
 	}
 
 	var supporters int
-	if err := s.db.QueryRowContext(ctx, `select count(*) from donations where status = 'paid'`).Scan(&supporters); err != nil {
+	if err := s.db.QueryRowContext(ctx, `select count(*) from donations where status = 'paid' and is_spam = 0`).Scan(&supporters); err != nil {
 		return app.PageData{}, err
 	}
 	activeProjects, err := s.CountActiveProjects(ctx)
@@ -161,7 +161,7 @@ func (s *Store) listProjectsWithLimit(ctx context.Context, activeOnly bool, limi
 			p.repo_url,
 			p.demo_url,
 			p.is_active,
-			coalesce(sum(case when d.status = 'paid' then d.amount else 0 end), 0) as raised,
+			coalesce(sum(case when d.status = 'paid' and d.is_spam = 0 then d.amount else 0 end), 0) as raised,
 			coalesce(max(case when u.published_at is not null then u.published_at end), p.updated_at) as last_updated
 		from projects p
 		left join donations d on d.project_id = p.id
@@ -265,7 +265,7 @@ func (s *Store) ListTimeline(ctx context.Context, projectSlug string, limit int)
 				p.slug as slug
 			from donations d
 			join projects p on p.id = d.project_id
-			where d.status = 'paid'
+			where d.status = 'paid' and d.visibility = 'public' and d.is_spam = 0
 			union all
 			select
 				'update' as kind,
@@ -322,8 +322,13 @@ func (s *Store) CreatePendingDonation(ctx context.Context, projectSlug, name, em
 	}
 
 	result, err := s.db.ExecContext(ctx, `
-		insert into donations (project_id, donor_name, donor_email, message, amount, currency, status, provider, created_at, updated_at)
-		values (?, ?, ?, ?, ?, 'IDR', 'pending', 'mock', datetime('now'), datetime('now'))
+		insert into donations (
+			project_id, donor_name, donor_email, message, amount, currency,
+			status, visibility, is_spam, moderation_note,
+			provider, provider_status,
+			created_at, updated_at
+		)
+		values (?, ?, ?, ?, ?, 'IDR', 'pending_payment', 'public', 0, '', 'mock', 'pending', datetime('now'), datetime('now'))
 	`, projectID, name, email, message, amount)
 	if err != nil {
 		return 0, err
@@ -334,10 +339,136 @@ func (s *Store) CreatePendingDonation(ctx context.Context, projectSlug, name, em
 func (s *Store) MarkDonationPaid(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `
 		update donations
-		set status = 'paid', paid_at = datetime('now'), updated_at = datetime('now')
+		set
+			status = 'paid',
+			provider_status = 'completed',
+			provider_completed_at = datetime('now'),
+			paid_at = datetime('now'),
+			updated_at = datetime('now')
 		where id = ?
 	`, id)
 	return err
+}
+
+func (s *Store) ListAdminDonations(ctx context.Context, limit int) ([]app.Donation, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		select
+			d.id,
+			d.project_id,
+			p.title,
+			p.slug,
+			d.donor_name,
+			d.donor_email,
+			d.message,
+			d.amount,
+			d.currency,
+			d.status,
+			d.visibility,
+			d.is_spam,
+			d.moderation_note,
+			d.provider,
+			d.provider_order_id,
+			d.provider_status,
+			d.provider_payment_url,
+			d.provider_payment_method,
+			d.provider_payment_number,
+			d.provider_fee,
+			d.provider_total_payment,
+			coalesce(d.provider_expired_at, ''),
+			coalesce(d.provider_completed_at, ''),
+			coalesce(d.paid_at, ''),
+			d.created_at,
+			d.updated_at
+		from donations d
+		join projects p on p.id = d.project_id
+		order by d.created_at desc, d.id desc
+		limit ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var donations []app.Donation
+	for rows.Next() {
+		var donation app.Donation
+		var isSpam int
+		if err := rows.Scan(
+			&donation.ID,
+			&donation.ProjectID,
+			&donation.ProjectTitle,
+			&donation.ProjectSlug,
+			&donation.DonorName,
+			&donation.DonorEmail,
+			&donation.Message,
+			&donation.Amount,
+			&donation.Currency,
+			&donation.Status,
+			&donation.Visibility,
+			&isSpam,
+			&donation.ModerationNote,
+			&donation.Provider,
+			&donation.ProviderOrderID,
+			&donation.ProviderStatus,
+			&donation.ProviderPaymentURL,
+			&donation.ProviderPaymentMethod,
+			&donation.ProviderPaymentNumber,
+			&donation.ProviderFee,
+			&donation.ProviderTotalPayment,
+			&donation.ProviderExpiredAt,
+			&donation.ProviderCompletedAt,
+			&donation.PaidAt,
+			&donation.CreatedAt,
+			&donation.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		donation.IsSpam = isSpam == 1
+		donations = append(donations, donation)
+	}
+
+	return donations, rows.Err()
+}
+
+func (s *Store) UpdateDonationModeration(ctx context.Context, id int64, action string) error {
+	var (
+		query string
+		args  []any
+	)
+
+	switch action {
+	case "hide_public":
+		query = `update donations set visibility = 'hidden', updated_at = datetime('now') where id = ?`
+		args = []any{id}
+	case "show_public":
+		query = `update donations set visibility = 'public', updated_at = datetime('now') where id = ?`
+		args = []any{id}
+	case "mark_spam":
+		query = `update donations set is_spam = 1, updated_at = datetime('now') where id = ?`
+		args = []any{id}
+	case "unmark_spam":
+		query = `update donations set is_spam = 0, updated_at = datetime('now') where id = ?`
+		args = []any{id}
+	default:
+		return errors.New("invalid moderation action")
+	}
+
+	result, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (s *Store) CreateProject(ctx context.Context, project app.Project) error {
@@ -394,10 +525,19 @@ func (s *Store) migrate(ctx context.Context) error {
 			amount integer not null,
 			currency text not null default 'IDR',
 			status text not null,
+			visibility text not null default 'public',
+			is_spam integer not null default 0,
+			moderation_note text not null default '',
 			provider text not null,
 			provider_order_id text not null default '',
+			provider_status text not null default '',
 			provider_payment_url text not null default '',
+			provider_payment_method text not null default '',
 			provider_payment_number text not null default '',
+			provider_fee integer not null default 0,
+			provider_total_payment integer not null default 0,
+			provider_expired_at text,
+			provider_completed_at text,
 			paid_at text,
 			created_at text not null,
 			updated_at text not null
@@ -413,18 +553,30 @@ func (s *Store) migrate(ctx context.Context) error {
 			updated_at text not null
 		);
 
-		alter table projects add column repo_url text not null default '';
-		alter table projects add column demo_url text not null default '';
 	`)
-	if err == nil {
-		return nil
+	if err != nil {
+		return err
 	}
 
-	// Existing databases will raise duplicate-column errors on repeated alter statements.
-	if strings.Contains(err.Error(), "duplicate column name: repo_url") || strings.Contains(err.Error(), "duplicate column name: demo_url") {
-		return nil
+	alterStatements := []string{
+		`alter table projects add column repo_url text not null default ''`,
+		`alter table projects add column demo_url text not null default ''`,
+		`alter table donations add column visibility text not null default 'public'`,
+		`alter table donations add column is_spam integer not null default 0`,
+		`alter table donations add column moderation_note text not null default ''`,
+		`alter table donations add column provider_status text not null default ''`,
+		`alter table donations add column provider_payment_method text not null default ''`,
+		`alter table donations add column provider_fee integer not null default 0`,
+		`alter table donations add column provider_total_payment integer not null default 0`,
+		`alter table donations add column provider_expired_at text`,
+		`alter table donations add column provider_completed_at text`,
 	}
-	return err
+	for _, statement := range alterStatements {
+		if _, err := s.db.ExecContext(ctx, statement); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) seed(ctx context.Context) error {

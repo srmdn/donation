@@ -27,6 +27,11 @@
       </div>
     </header>
 
+    <nav class="admin-subnav" aria-label="Admin">
+      <a class="ghost-link current" href="/admin/projects">Projects</a>
+      <a class="ghost-link" href="/admin/donations">Donations</a>
+    </nav>
+
     {{if .Error}}
       <p class="form-alert error">{{.Error}}</p>
     {{end}}

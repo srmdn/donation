@@ -276,6 +276,46 @@ func main() {
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}
 	})
+	mux.HandleFunc("GET /admin/donations", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(r, adminSessionSecret) {
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+
+		donations, err := db.ListAdminDonations(r.Context(), 100)
+		if err != nil {
+			slog.Error("list admin donations", "error", err)
+			http.Error(w, "data load failed", http.StatusInternalServerError)
+			return
+		}
+
+		page := app.AdminDonationsPageData{
+			Donations: donations,
+			Error:     strings.TrimSpace(r.URL.Query().Get("error")),
+			Notice:    strings.TrimSpace(r.URL.Query().Get("notice")),
+		}
+		for _, donation := range donations {
+			page.TotalCount++
+			if donation.Status == "paid" {
+				page.PaidCount++
+			}
+			if donation.Status == "pending_payment" {
+				page.PendingCount++
+			}
+			if donation.Visibility == "public" {
+				page.PublicCount++
+			}
+			if donation.IsSpam {
+				page.SpamCount++
+			}
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := tmpl.ExecuteTemplate(w, "admin_donations.html", page); err != nil {
+			slog.Error("render admin donations", "error", err)
+			http.Error(w, "render failed", http.StatusInternalServerError)
+		}
+	})
 	mux.HandleFunc("POST /admin/projects", func(w http.ResponseWriter, r *http.Request) {
 		if !isAdmin(r, adminSessionSecret) {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
@@ -318,6 +358,31 @@ func main() {
 			return
 		}
 		http.Redirect(w, r, "/admin/projects?notice="+url.QueryEscape("Project updated"), http.StatusSeeOther)
+	})
+	mux.HandleFunc("POST /admin/donations/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(r, adminSessionSecret) {
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid donation id", http.StatusBadRequest)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+
+		action := strings.TrimSpace(r.FormValue("action"))
+		if err := db.UpdateDonationModeration(r.Context(), id, action); err != nil {
+			slog.Error("update donation moderation", "error", err, "id", id, "action", action)
+			http.Redirect(w, r, "/admin/donations?error="+url.QueryEscape("Update failed"), http.StatusSeeOther)
+			return
+		}
+
+		http.Redirect(w, r, "/admin/donations?notice="+url.QueryEscape("Donation updated"), http.StatusSeeOther)
 	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

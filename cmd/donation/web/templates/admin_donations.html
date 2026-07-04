@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin donations</title>
+  <link rel="stylesheet" href="/static/base.css">
+  <link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+  {{template "site_nav" .}}
+  <main class="admin-shell">
+    <header class="admin-header">
+      <div>
+        <p class="eyebrow">Admin</p>
+        <h1>Donations</h1>
+      </div>
+
+      <div class="admin-actions">
+        <div class="admin-stats">
+          <span>{{.TotalCount}} total</span>
+          <span>{{.PaidCount}} paid</span>
+          <span>{{.PendingCount}} pending</span>
+          <span>{{.PublicCount}} public</span>
+          <span>{{.SpamCount}} spam</span>
+        </div>
+        <form method="post" action="/admin/logout">
+          <button class="secondary-button" type="submit">Sign out</button>
+        </form>
+      </div>
+    </header>
+
+    <nav class="admin-subnav" aria-label="Admin">
+      <a class="ghost-link" href="/admin/projects">Projects</a>
+      <a class="ghost-link current" href="/admin/donations">Donations</a>
+    </nav>
+
+    {{if .Error}}
+      <p class="form-alert error">{{.Error}}</p>
+    {{end}}
+    {{if .Notice}}
+      <p class="form-alert notice">{{.Notice}}</p>
+    {{end}}
+
+    <section class="admin-panel">
+      <div class="section-heading compact admin-panel-head">
+        <div>
+          <p class="eyebrow">Recent</p>
+          <h2>Donation list</h2>
+        </div>
+      </div>
+
+      <div class="admin-table">
+        {{range .Donations}}
+          <article class="admin-row admin-donation-row">
+            <div>
+              <div class="admin-row-top">
+                <strong>{{if .DonorName}}{{.DonorName}}{{else}}Anonymous{{end}}</strong>
+                <span class="status-pill">{{.Status}}</span>
+              </div>
+              <p>{{rupiah .Amount}} for <a href="/projects/{{.ProjectSlug}}">{{.ProjectTitle}}</a></p>
+              <div class="admin-row-meta">
+                <span>{{.CreatedAt}}</span>
+                <span>provider: {{.Provider}}</span>
+                <span>provider status: {{if .ProviderStatus}}{{.ProviderStatus}}{{else}}-{{end}}</span>
+                <span>visibility: {{.Visibility}}</span>
+                <span>spam: {{if .IsSpam}}yes{{else}}no{{end}}</span>
+              </div>
+              {{if .DonorEmail}}
+                <div class="admin-row-meta">
+                  <span>{{.DonorEmail}}</span>
+                </div>
+              {{end}}
+              {{if .Message}}
+                <p>{{.Message}}</p>
+              {{end}}
+            </div>
+
+            <div class="admin-row-actions">
+              <form method="post" action="/admin/donations/{{.ID}}">
+                <input type="hidden" name="action" value="{{if eq .Visibility "public"}}hide_public{{else}}show_public{{end}}">
+                <button class="ghost-link button-link" type="submit">{{if eq .Visibility "public"}}Hide{{else}}Show{{end}}</button>
+              </form>
+              <form method="post" action="/admin/donations/{{.ID}}">
+                <input type="hidden" name="action" value="{{if .IsSpam}}unmark_spam{{else}}mark_spam{{end}}">
+                <button class="ghost-link button-link" type="submit">{{if .IsSpam}}Unspam{{else}}Spam{{end}}</button>
+              </form>
+            </div>
+          </article>
+        {{else}}
+          <p>No donations yet.</p>
+        {{end}}
+      </div>
+    </section>
+  </main>
+  {{template "site_footer" .}}
+</body>
+</html>
