@@ -70,7 +70,7 @@
         {{end}}
       </div>
 
-      <section class="timeline-section" aria-label="Live timeline">
+      <section id="timeline" class="timeline-section" aria-label="Live timeline">
         <div class="section-heading compact">
           <div>
             <p class="eyebrow">Live timeline</p>
@@ -97,6 +97,12 @@
             </li>
           {{end}}
         </ol>
+
+        {{if .TimelineHasMore}}
+          <div class="timeline-actions">
+            <a class="secondary-link inline-action" href="/?timeline_limit={{.TimelineNextLimit}}#timeline">Read more</a>
+          </div>
+        {{end}}
       </section>
     </section>
   </main>

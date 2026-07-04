@@ -30,12 +30,14 @@ type Builder struct {
 }
 
 type PageData struct {
-	Builder          Builder
-	TotalRaised      int
-	SupporterCount   int
-	ActiveProjectNum int
-	Projects         []Project
-	Timeline         []TimelineEvent
+	Builder           Builder
+	TotalRaised       int
+	SupporterCount    int
+	ActiveProjectNum  int
+	Projects          []Project
+	Timeline          []TimelineEvent
+	TimelineHasMore   bool
+	TimelineNextLimit int
 }
 
 type ProjectPageData struct {

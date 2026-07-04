@@ -48,7 +48,8 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS)))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		data, err := db.PageData(r.Context())
+		timelineLimit := timelineLimitFromRequest(r, 6)
+		data, err := db.PageDataWithTimelineLimit(r.Context(), timelineLimit)
 		if err != nil {
 			slog.Error("load page data", "error", err)
 			http.Error(w, "data load failed", http.StatusInternalServerError)
@@ -62,7 +63,7 @@ func main() {
 		}
 	})
 	mux.HandleFunc("GET /projects/{slug}", func(w http.ResponseWriter, r *http.Request) {
-		data, err := db.PageData(r.Context())
+		data, err := db.PageDataWithTimelineLimit(r.Context(), 6)
 		if err != nil {
 			slog.Error("load page data", "error", err)
 			http.Error(w, "data load failed", http.StatusInternalServerError)
@@ -79,6 +80,17 @@ func main() {
 			http.Error(w, "data load failed", http.StatusInternalServerError)
 			return
 		}
+
+		projectTimelineLimit := timelineLimitFromRequest(r, 5)
+		timeline, hasMore, err := db.ListTimeline(r.Context(), project.Slug, projectTimelineLimit)
+		if err != nil {
+			slog.Error("load project timeline", "error", err)
+			http.Error(w, "data load failed", http.StatusInternalServerError)
+			return
+		}
+		data.Timeline = timeline
+		data.TimelineHasMore = hasMore
+		data.TimelineNextLimit = projectTimelineLimit + 5
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, "project.html", app.ProjectPageData{
@@ -132,7 +144,7 @@ func main() {
 		http.Redirect(w, r, "/thanks?id="+strconv.FormatInt(id, 10), http.StatusSeeOther)
 	})
 	mux.HandleFunc("GET /thanks", func(w http.ResponseWriter, r *http.Request) {
-		data, err := db.PageData(r.Context())
+		data, err := db.PageDataWithTimelineLimit(r.Context(), 6)
 		if err != nil {
 			slog.Error("load page data", "error", err)
 			http.Error(w, "data load failed", http.StatusInternalServerError)
@@ -356,6 +368,22 @@ func donationAmountFromRequest(r *http.Request) (int, error) {
 		return 0, errors.New("minimum donation is Rp25.000")
 	}
 	return amount, nil
+}
+
+func timelineLimitFromRequest(r *http.Request, fallback int) int {
+	raw := strings.TrimSpace(r.URL.Query().Get("timeline_limit"))
+	if raw == "" {
+		return fallback
+	}
+
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	if value > 60 {
+		return 60
+	}
+	return value
 }
 
 func projectFromRequest(r *http.Request) (app.Project, error) {

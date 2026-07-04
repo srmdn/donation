@@ -84,28 +84,32 @@
         <button class="primary-button" type="submit">Continue to payment</button>
       </form>
 
-      <aside class="timeline-preview" aria-label="Project timeline">
+      <aside id="timeline" class="timeline-preview" aria-label="Project timeline">
         <p class="eyebrow">Recent activity</p>
         <ol class="timeline">
           {{range .Timeline}}
-            {{if eq .Project $.Project.Title}}
-              <li class="timeline-item event-{{.Kind}}">
-                <div class="marker" aria-hidden="true"></div>
-                <div class="event-body">
-                  <div class="event-head">
-                    <span>{{.Project}}</span>
-                    <time>{{.TimeAgo}}</time>
-                  </div>
-                  <h3>{{.Title}}</h3>
-                  <p>{{.Detail}}</p>
-                  {{if eventHasAmount .Amount}}
-                    <strong class="amount">{{rupiah .Amount}}</strong>
-                  {{end}}
+            <li class="timeline-item event-{{.Kind}}">
+              <div class="marker" aria-hidden="true"></div>
+              <div class="event-body">
+                <div class="event-head">
+                  <span>{{.Project}}</span>
+                  <time>{{.TimeAgo}}</time>
                 </div>
-              </li>
-            {{end}}
+                <h3>{{.Title}}</h3>
+                <p>{{.Detail}}</p>
+                {{if eventHasAmount .Amount}}
+                  <strong class="amount">{{rupiah .Amount}}</strong>
+                {{end}}
+              </div>
+            </li>
           {{end}}
         </ol>
+
+        {{if .TimelineHasMore}}
+          <div class="timeline-actions">
+            <a class="secondary-link inline-action" href="/projects/{{.Project.Slug}}?timeline_limit={{.TimelineNextLimit}}#timeline">Read more</a>
+          </div>
+        {{end}}
       </aside>
     </section>
   </main>

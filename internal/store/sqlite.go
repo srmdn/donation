@@ -51,6 +51,10 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) PageData(ctx context.Context) (app.PageData, error) {
+	return s.PageDataWithTimelineLimit(ctx, 6)
+}
+
+func (s *Store) PageDataWithTimelineLimit(ctx context.Context, limit int) (app.PageData, error) {
 	builder := app.Builder{
 		Name:   "Said Ramadhan",
 		Handle: "srmdn",
@@ -62,7 +66,7 @@ func (s *Store) PageData(ctx context.Context) (app.PageData, error) {
 		return app.PageData{}, err
 	}
 
-	timeline, err := s.ListTimeline(ctx, "")
+	timeline, hasMore, err := s.ListTimeline(ctx, "", limit)
 	if err != nil {
 		return app.PageData{}, err
 	}
@@ -78,12 +82,14 @@ func (s *Store) PageData(ctx context.Context) (app.PageData, error) {
 	}
 
 	return app.PageData{
-		Builder:          builder,
-		TotalRaised:      total,
-		SupporterCount:   supporters,
-		ActiveProjectNum: len(projects),
-		Projects:         projects,
-		Timeline:         timeline,
+		Builder:           builder,
+		TotalRaised:       total,
+		SupporterCount:    supporters,
+		ActiveProjectNum:  len(projects),
+		Projects:          projects,
+		Timeline:          timeline,
+		TimelineHasMore:   hasMore,
+		TimelineNextLimit: limit + 6,
 	}, nil
 }
 
@@ -177,13 +183,18 @@ func (s *Store) FindProjectByID(ctx context.Context, id int64) (app.Project, err
 	return app.Project{}, sql.ErrNoRows
 }
 
-func (s *Store) ListTimeline(ctx context.Context, projectSlug string) ([]app.TimelineEvent, error) {
+func (s *Store) ListTimeline(ctx context.Context, projectSlug string, limit int) ([]app.TimelineEvent, bool, error) {
+	if limit <= 0 {
+		limit = 6
+	}
+
 	args := []any{}
 	filter := ""
 	if projectSlug != "" {
 		filter = "where slug = ?"
 		args = append(args, projectSlug)
 	}
+	args = append(args, limit+1)
 
 	query := fmt.Sprintf(`
 		select kind, title, detail, amount, project, occurred_at
@@ -216,12 +227,12 @@ func (s *Store) ListTimeline(ctx context.Context, projectSlug string) ([]app.Tim
 		)
 		%s
 		order by occurred_at desc
-		limit 12
+		limit ?
 	`, filter)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
 
@@ -230,12 +241,21 @@ func (s *Store) ListTimeline(ctx context.Context, projectSlug string) ([]app.Tim
 		var event app.TimelineEvent
 		var occurredAt string
 		if err := rows.Scan(&event.Kind, &event.Title, &event.Detail, &event.Amount, &event.Project, &occurredAt); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		event.TimeAgo = relativeTime(occurredAt)
 		events = append(events, event)
 	}
-	return events, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+
+	hasMore := len(events) > limit
+	if hasMore {
+		events = events[:limit]
+	}
+
+	return events, hasMore, nil
 }
 
 func (s *Store) CreatePendingDonation(ctx context.Context, projectSlug, name, email, message string, amount int) (int64, error) {
