@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/srmdn/donation/internal/app"
@@ -20,6 +22,10 @@ func ErrNotFound() error {
 }
 
 func Open(path string) (*Store, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err
@@ -82,6 +88,19 @@ func (s *Store) PageData(ctx context.Context) (app.PageData, error) {
 }
 
 func (s *Store) ListProjects(ctx context.Context) ([]app.Project, error) {
+	return s.listProjects(ctx, true)
+}
+
+func (s *Store) ListAllProjects(ctx context.Context) ([]app.Project, error) {
+	return s.listProjects(ctx, false)
+}
+
+func (s *Store) listProjects(ctx context.Context, activeOnly bool) ([]app.Project, error) {
+	where := ""
+	if activeOnly {
+		where = "where p.is_active = 1"
+	}
+
 	rows, err := s.db.QueryContext(ctx, `
 		select
 			p.id,
@@ -92,12 +111,13 @@ func (s *Store) ListProjects(ctx context.Context) ([]app.Project, error) {
 			p.status,
 			p.goal_amount,
 			p.accent,
+			p.is_active,
 			coalesce(sum(case when d.status = 'paid' then d.amount else 0 end), 0) as raised,
 			coalesce(max(case when u.published_at is not null then u.published_at end), p.updated_at) as last_updated
 		from projects p
 		left join donations d on d.project_id = p.id
 		left join project_updates u on u.project_id = p.id
-		where p.is_active = 1
+		`+where+`
 		group by p.id
 		order by p.id asc
 	`)
@@ -119,6 +139,7 @@ func (s *Store) ListProjects(ctx context.Context) ([]app.Project, error) {
 			&project.Status,
 			&project.Goal,
 			&project.Accent,
+			&project.IsActive,
 			&project.Raised,
 			&updatedAt,
 		); err != nil {
@@ -131,12 +152,25 @@ func (s *Store) ListProjects(ctx context.Context) ([]app.Project, error) {
 }
 
 func (s *Store) FindProject(ctx context.Context, slug string) (app.Project, error) {
-	projects, err := s.ListProjects(ctx)
+	projects, err := s.ListAllProjects(ctx)
 	if err != nil {
 		return app.Project{}, err
 	}
 	for _, project := range projects {
 		if project.Slug == slug {
+			return project, nil
+		}
+	}
+	return app.Project{}, sql.ErrNoRows
+}
+
+func (s *Store) FindProjectByID(ctx context.Context, id int64) (app.Project, error) {
+	projects, err := s.ListAllProjects(ctx)
+	if err != nil {
+		return app.Project{}, err
+	}
+	for _, project := range projects {
+		if project.ID == id {
 			return project, nil
 		}
 	}
@@ -231,6 +265,33 @@ func (s *Store) MarkDonationPaid(ctx context.Context, id int64) error {
 		where id = ?
 	`, id)
 	return err
+}
+
+func (s *Store) CreateProject(ctx context.Context, project app.Project) error {
+	_, err := s.db.ExecContext(ctx, `
+		insert into projects (title, slug, summary, description, status, goal_amount, accent, is_active, created_at, updated_at)
+		values (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+	`, project.Title, project.Slug, project.Summary, project.Description, project.Status, project.Goal, project.Accent, boolToInt(project.IsActive))
+	return err
+}
+
+func (s *Store) UpdateProject(ctx context.Context, project app.Project) error {
+	result, err := s.db.ExecContext(ctx, `
+		update projects
+		set title = ?, slug = ?, summary = ?, description = ?, status = ?, goal_amount = ?, accent = ?, is_active = ?, updated_at = datetime('now')
+		where id = ?
+	`, project.Title, project.Slug, project.Summary, project.Description, project.Status, project.Goal, project.Accent, boolToInt(project.IsActive), project.ID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (s *Store) migrate(ctx context.Context) error {
@@ -406,4 +467,11 @@ func relativeTime(value string) string {
 		return fmt.Sprintf("%d days ago", int(diff.Hours()/24))
 	}
 	return t.Format("2 Jan 2006")
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
