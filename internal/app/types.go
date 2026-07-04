@@ -111,3 +111,14 @@ type AdminDonationsPageData struct {
 	PublicCount  int
 	SpamCount    int
 }
+
+type PayPageData struct {
+	Builder  Builder
+	Donation Donation
+}
+
+type ThanksPageData struct {
+	Builder  Builder
+	Donation Donation
+	HasID    bool
+}

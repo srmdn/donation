@@ -350,6 +350,124 @@ func (s *Store) MarkDonationPaid(ctx context.Context, id int64) error {
 	return err
 }
 
+func (s *Store) FindDonationByID(ctx context.Context, id int64) (app.Donation, error) {
+	row := s.db.QueryRowContext(ctx, `
+		select
+			d.id,
+			d.project_id,
+			p.title,
+			p.slug,
+			d.donor_name,
+			d.donor_email,
+			d.message,
+			d.amount,
+			d.currency,
+			d.status,
+			d.visibility,
+			d.is_spam,
+			d.moderation_note,
+			d.provider,
+			d.provider_order_id,
+			d.provider_status,
+			d.provider_payment_url,
+			d.provider_payment_method,
+			d.provider_payment_number,
+			d.provider_fee,
+			d.provider_total_payment,
+			coalesce(d.provider_expired_at, ''),
+			coalesce(d.provider_completed_at, ''),
+			coalesce(d.paid_at, ''),
+			d.created_at,
+			d.updated_at
+		from donations d
+		join projects p on p.id = d.project_id
+		where d.id = ?
+	`, id)
+
+	return scanDonation(row)
+}
+
+func (s *Store) FindDonationByOrderID(ctx context.Context, orderID string) (app.Donation, error) {
+	row := s.db.QueryRowContext(ctx, `
+		select
+			d.id,
+			d.project_id,
+			p.title,
+			p.slug,
+			d.donor_name,
+			d.donor_email,
+			d.message,
+			d.amount,
+			d.currency,
+			d.status,
+			d.visibility,
+			d.is_spam,
+			d.moderation_note,
+			d.provider,
+			d.provider_order_id,
+			d.provider_status,
+			d.provider_payment_url,
+			d.provider_payment_method,
+			d.provider_payment_number,
+			d.provider_fee,
+			d.provider_total_payment,
+			coalesce(d.provider_expired_at, ''),
+			coalesce(d.provider_completed_at, ''),
+			coalesce(d.paid_at, ''),
+			d.created_at,
+			d.updated_at
+		from donations d
+		join projects p on p.id = d.project_id
+		where d.provider_order_id = ?
+	`, orderID)
+
+	return scanDonation(row)
+}
+
+func (s *Store) UpdateDonationPaymentDraft(ctx context.Context, donation app.Donation) error {
+	result, err := s.db.ExecContext(ctx, `
+		update donations
+		set
+			provider = ?,
+			provider_order_id = ?,
+			provider_status = ?,
+			provider_payment_url = ?,
+			provider_payment_method = ?,
+			provider_payment_number = ?,
+			provider_fee = ?,
+			provider_total_payment = ?,
+			provider_expired_at = ?,
+			updated_at = datetime('now')
+		where id = ?
+	`, donation.Provider, donation.ProviderOrderID, donation.ProviderStatus, donation.ProviderPaymentURL, donation.ProviderPaymentMethod, donation.ProviderPaymentNumber, donation.ProviderFee, donation.ProviderTotalPayment, nullIfEmpty(donation.ProviderExpiredAt), donation.ID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) UpdateDonationProviderStatus(ctx context.Context, id int64, status, providerStatus, paymentMethod, completedAt string) error {
+	_, err := s.db.ExecContext(ctx, `
+		update donations
+		set
+			status = ?,
+			provider_status = ?,
+			provider_payment_method = case when ? = '' then provider_payment_method else ? end,
+			provider_completed_at = case when ? = '' then provider_completed_at else ? end,
+			paid_at = case when ? = 'paid' then datetime('now') else paid_at end,
+			updated_at = datetime('now')
+		where id = ?
+	`, status, providerStatus, paymentMethod, paymentMethod, completedAt, completedAt, status, id)
+	return err
+}
+
 func (s *Store) ListAdminDonations(ctx context.Context, limit int) ([]app.Donation, error) {
 	if limit <= 0 {
 		limit = 100
@@ -395,43 +513,53 @@ func (s *Store) ListAdminDonations(ctx context.Context, limit int) ([]app.Donati
 
 	var donations []app.Donation
 	for rows.Next() {
-		var donation app.Donation
-		var isSpam int
-		if err := rows.Scan(
-			&donation.ID,
-			&donation.ProjectID,
-			&donation.ProjectTitle,
-			&donation.ProjectSlug,
-			&donation.DonorName,
-			&donation.DonorEmail,
-			&donation.Message,
-			&donation.Amount,
-			&donation.Currency,
-			&donation.Status,
-			&donation.Visibility,
-			&isSpam,
-			&donation.ModerationNote,
-			&donation.Provider,
-			&donation.ProviderOrderID,
-			&donation.ProviderStatus,
-			&donation.ProviderPaymentURL,
-			&donation.ProviderPaymentMethod,
-			&donation.ProviderPaymentNumber,
-			&donation.ProviderFee,
-			&donation.ProviderTotalPayment,
-			&donation.ProviderExpiredAt,
-			&donation.ProviderCompletedAt,
-			&donation.PaidAt,
-			&donation.CreatedAt,
-			&donation.UpdatedAt,
-		); err != nil {
+		donation, err := scanDonation(rows)
+		if err != nil {
 			return nil, err
 		}
-		donation.IsSpam = isSpam == 1
 		donations = append(donations, donation)
 	}
 
 	return donations, rows.Err()
+}
+
+func scanDonation(scanner interface {
+	Scan(dest ...any) error
+}) (app.Donation, error) {
+	var donation app.Donation
+	var isSpam int
+	if err := scanner.Scan(
+		&donation.ID,
+		&donation.ProjectID,
+		&donation.ProjectTitle,
+		&donation.ProjectSlug,
+		&donation.DonorName,
+		&donation.DonorEmail,
+		&donation.Message,
+		&donation.Amount,
+		&donation.Currency,
+		&donation.Status,
+		&donation.Visibility,
+		&isSpam,
+		&donation.ModerationNote,
+		&donation.Provider,
+		&donation.ProviderOrderID,
+		&donation.ProviderStatus,
+		&donation.ProviderPaymentURL,
+		&donation.ProviderPaymentMethod,
+		&donation.ProviderPaymentNumber,
+		&donation.ProviderFee,
+		&donation.ProviderTotalPayment,
+		&donation.ProviderExpiredAt,
+		&donation.ProviderCompletedAt,
+		&donation.PaidAt,
+		&donation.CreatedAt,
+		&donation.UpdatedAt,
+	); err != nil {
+		return app.Donation{}, err
+	}
+	donation.IsSpam = isSpam == 1
+	return donation, nil
 }
 
 func (s *Store) UpdateDonationModeration(ctx context.Context, id int64, action string) error {
@@ -712,4 +840,11 @@ func boolToInt(value bool) int {
 		return 1
 	}
 	return 0
+}
+
+func nullIfEmpty(value string) any {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return value
 }

@@ -48,6 +48,12 @@ Override:
 ADDR=127.0.0.1:3000 DB_PATH=data/dev.db go run ./cmd/donation
 ```
 
+For Pakasir return links:
+
+```txt
+PUBLIC_BASE_URL=http://127.0.0.1:8094
+```
+
 Admin defaults:
 
 ```txt
@@ -78,10 +84,11 @@ The current app uses a mock payment flow for local development.
 Production payment flow is planned around Pakasir:
 
 - create QRIS transaction from donation form
-- redirect or render payment instructions
-- receive payment webhook
-- verify transaction status
-- mark donation as paid
+- store provider payment data locally
+- render `/pay/{donationId}` with hosted QRIS link and QR string fallback
+- receive payment webhook at `/api/webhooks/pakasir`
+- verify transaction status with Pakasir transaction detail API
+- mark donation as paid only after verification
 
 ## Donation Amounts
 

@@ -286,7 +286,8 @@
 
 .funding-panel,
 .donation-form,
-.thanks-panel {
+.thanks-panel,
+.pay-panel {
   padding: 24px;
   background: var(--surface);
   border: 1px solid var(--line);
@@ -375,8 +376,56 @@
   width: min(540px, 100%);
 }
 
+.pay-panel {
+  display: grid;
+  gap: 18px;
+  width: min(640px, 100%);
+}
+
 .thanks-panel h1 {
   font-size: clamp(34px, 8vw, 52px);
+}
+
+.pay-meta,
+.pay-actions,
+.pay-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pay-meta span {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #efefe9;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.pay-summary {
+  justify-content: space-between;
+  padding: 18px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.pay-summary strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 24px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.code-block {
+  width: 100%;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 .project-list-actions,
@@ -577,6 +626,11 @@
     align-items: start;
     flex-direction: column;
     gap: 14px;
+  }
+
+  .pay-summary {
+    align-items: start;
+    flex-direction: column;
   }
 
   .project-topline,

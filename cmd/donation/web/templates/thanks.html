@@ -11,10 +11,27 @@
   {{template "site_nav" .}}
   <main class="center-shell">
     <section class="thanks-panel">
-      <p class="eyebrow">Mock payment</p>
-      <h1>Donation draft created.</h1>
-      <p class="bio">Payment is not connected yet. Next step is creating SQLite records, then replacing this page with Pakasir QRIS checkout.</p>
-      <a class="primary-link" href="/">Back to builder page</a>
+      {{if .HasID}}
+        {{if eq .Donation.Status "paid"}}
+          <p class="eyebrow">Payment received</p>
+          <h1>Support confirmed.</h1>
+          <p class="bio">{{rupiah .Donation.Amount}} for {{.Donation.ProjectTitle}} is recorded.</p>
+          <a class="primary-link" href="/projects/{{.Donation.ProjectSlug}}">Back to project</a>
+        {{else}}
+          <p class="eyebrow">Payment pending</p>
+          <h1>Waiting for confirmation.</h1>
+          <p class="bio">We have not marked this donation as paid yet. If you already paid, reopen the payment page and try again in a moment.</p>
+          <div class="pay-actions">
+            <a class="primary-link" href="/pay/{{.Donation.ID}}">Back to payment</a>
+            <a class="secondary-link inline-action" href="/projects/{{.Donation.ProjectSlug}}">Back to project</a>
+          </div>
+        {{end}}
+      {{else}}
+        <p class="eyebrow">Donation</p>
+        <h1>Request received.</h1>
+        <p class="bio">Return to the project page and continue when ready.</p>
+        <a class="primary-link" href="/">Back to builder page</a>
+      {{end}}
     </section>
   </main>
   {{template "site_footer" .}}

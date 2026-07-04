@@ -77,6 +77,12 @@
             </div>
 
             <div class="admin-row-actions">
+              {{if and (eq .Provider "pakasir") .ProviderOrderID}}
+                <form method="post" action="/admin/donations/{{.ID}}">
+                  <input type="hidden" name="action" value="refresh_status">
+                  <button class="ghost-link button-link" type="submit">Refresh</button>
+                </form>
+              {{end}}
               <form method="post" action="/admin/donations/{{.ID}}">
                 <input type="hidden" name="action" value="{{if eq .Visibility "public"}}hide_public{{else}}show_public{{end}}">
                 <button class="ghost-link button-link" type="submit">{{if eq .Visibility "public"}}Hide{{else}}Show{{end}}</button>

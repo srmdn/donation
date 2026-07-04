@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"html/template"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -18,6 +21,7 @@ import (
 	"time"
 
 	"github.com/srmdn/donation/internal/app"
+	"github.com/srmdn/donation/internal/payment"
 	"github.com/srmdn/donation/internal/store"
 )
 
@@ -29,8 +33,11 @@ const minDonationAmount = 25000
 func main() {
 	addr := env("ADDR", "127.0.0.1:8094")
 	dbPath := env("DB_PATH", "data/donation.db")
+	publicBaseURL := env("PUBLIC_BASE_URL", "")
 	adminPassword := env("ADMIN_PASSWORD", "admin")
 	adminSessionSecret := env("ADMIN_SESSION_SECRET", adminPassword)
+	adminCookieSecure := strings.HasPrefix(strings.ToLower(publicBaseURL), "https://")
+	paymentMode := env("PAYMENT_MODE", "mock")
 	staticFS := mustSubFS(assets, "web/static")
 	db, err := store.Open(dbPath)
 	if err != nil {
@@ -170,29 +177,178 @@ func main() {
 		}
 
 		// Mock mode: mark paid immediately so progress/timeline behavior is visible before Pakasir.
-		if env("PAYMENT_MODE", "mock") == "mock" {
+		if paymentMode == "mock" {
 			if err := db.MarkDonationPaid(r.Context(), id); err != nil {
 				slog.Error("mark mock donation paid", "error", err)
 				http.Error(w, "donation failed", http.StatusInternalServerError)
 				return
 			}
+			http.Redirect(w, r, "/thanks?id="+strconv.FormatInt(id, 10), http.StatusSeeOther)
+			return
 		}
 
-		http.Redirect(w, r, "/thanks?id="+strconv.FormatInt(id, 10), http.StatusSeeOther)
-	})
-	mux.HandleFunc("GET /thanks", func(w http.ResponseWriter, r *http.Request) {
-		data, err := db.PageDataWithTimelineLimit(r.Context(), 6)
+		if paymentMode != "pakasir" {
+			http.Error(w, "unsupported payment mode", http.StatusInternalServerError)
+			return
+		}
+
+		donation, err := db.FindDonationByID(r.Context(), id)
 		if err != nil {
-			slog.Error("load page data", "error", err)
+			slog.Error("load donation after create", "error", err, "id", id)
+			http.Error(w, "donation failed", http.StatusInternalServerError)
+			return
+		}
+
+		pakasir := pakasirClientFromEnv()
+		redirectURL := ""
+		if publicBaseURL != "" {
+			redirectURL = strings.TrimRight(publicBaseURL, "/") + "/thanks?id=" + strconv.FormatInt(id, 10)
+		}
+		orderID := pakasirOrderID(id)
+		result, err := pakasir.CreateQRISTransaction(r.Context(), orderID, donation.Amount, redirectURL)
+		if err != nil {
+			slog.Error("create pakasir transaction", "error", err, "id", id)
+			http.Error(w, "payment setup failed", http.StatusInternalServerError)
+			return
+		}
+
+		donation.Provider = "pakasir"
+		donation.ProviderOrderID = result.OrderID
+		donation.ProviderPaymentURL = result.PaymentURL
+		donation.ProviderPaymentMethod = result.PaymentMethod
+		donation.ProviderPaymentNumber = result.PaymentNumber
+		donation.ProviderFee = result.Fee
+		donation.ProviderTotalPayment = result.TotalPayment
+		donation.ProviderExpiredAt = result.ExpiredAt
+		donation.ProviderStatus = result.ProviderStatus
+		if err := db.UpdateDonationPaymentDraft(r.Context(), donation); err != nil {
+			slog.Error("store pakasir transaction", "error", err, "id", id)
+			http.Error(w, "payment setup failed", http.StatusInternalServerError)
+			return
+		}
+
+		http.Redirect(w, r, "/pay/"+strconv.FormatInt(id, 10), http.StatusSeeOther)
+	})
+	mux.HandleFunc("GET /pay/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid donation id", http.StatusBadRequest)
+			return
+		}
+
+		donation, err := db.FindDonationByID(r.Context(), id)
+		if errors.Is(err, store.ErrNotFound()) {
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			slog.Error("load payment page donation", "error", err, "id", id)
 			http.Error(w, "data load failed", http.StatusInternalServerError)
+			return
+		}
+		if donation.Status == "paid" {
+			http.Redirect(w, r, "/thanks?id="+strconv.FormatInt(id, 10), http.StatusSeeOther)
 			return
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := tmpl.ExecuteTemplate(w, "thanks.html", data); err != nil {
+		if err := tmpl.ExecuteTemplate(w, "pay.html", app.PayPageData{
+			Builder:  defaultBuilder(),
+			Donation: donation,
+		}); err != nil {
+			slog.Error("render pay page", "error", err)
+			http.Error(w, "render failed", http.StatusInternalServerError)
+		}
+	})
+	mux.HandleFunc("GET /thanks", func(w http.ResponseWriter, r *http.Request) {
+		page := app.ThanksPageData{
+			Builder: defaultBuilder(),
+		}
+
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		if id != "" {
+			if donationID, err := strconv.ParseInt(id, 10, 64); err == nil {
+				donation, err := db.FindDonationByID(r.Context(), donationID)
+				if err == nil {
+					page.HasID = true
+					if paymentMode == "pakasir" && donation.Provider == "pakasir" && donation.Status != "paid" && donation.ProviderOrderID != "" {
+						if err := refreshDonationStatus(r.Context(), db, pakasirClientFromEnv(), donation); err != nil {
+							slog.Warn("refresh donation status", "error", err, "id", donation.ID)
+						} else if updated, err := db.FindDonationByID(r.Context(), donationID); err == nil {
+							donation = updated
+						}
+					}
+					page.Donation = donation
+				}
+			}
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := tmpl.ExecuteTemplate(w, "thanks.html", page); err != nil {
 			slog.Error("render thanks", "error", err)
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}
+	})
+	mux.HandleFunc("POST /api/webhooks/pakasir", func(w http.ResponseWriter, r *http.Request) {
+		if paymentMode != "pakasir" {
+			http.Error(w, "payment mode disabled", http.StatusNotFound)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+
+		var payload struct {
+			Amount        int    `json:"amount"`
+			OrderID       string `json:"order_id"`
+			Project       string `json:"project"`
+			Status        string `json:"status"`
+			PaymentMethod string `json:"payment_method"`
+			CompletedAt   string `json:"completed_at"`
+		}
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&payload); err != nil {
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+		if err := decoder.Decode(&struct{}{}); err != io.EOF {
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+
+		payload.OrderID = strings.TrimSpace(payload.OrderID)
+		payload.Project = strings.TrimSpace(payload.Project)
+		if payload.OrderID == "" || payload.Amount <= 0 || payload.Project == "" {
+			http.Error(w, "missing required webhook fields", http.StatusBadRequest)
+			return
+		}
+		if payload.Project != env("PAKASIR_MERCHANT_SLUG", "") {
+			http.Error(w, "project mismatch", http.StatusBadRequest)
+			return
+		}
+
+		donation, err := db.FindDonationByOrderID(r.Context(), payload.OrderID)
+		if errors.Is(err, store.ErrNotFound()) {
+			http.Error(w, "donation not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			slog.Error("find donation by order id", "error", err, "order_id", payload.OrderID)
+			http.Error(w, "lookup failed", http.StatusInternalServerError)
+			return
+		}
+		if donation.Amount != payload.Amount {
+			http.Error(w, "amount mismatch", http.StatusBadRequest)
+			return
+		}
+
+		if err := refreshDonationStatus(r.Context(), db, pakasirClientFromEnv(), donation); err != nil {
+			slog.Error("refresh donation status from webhook", "error", err, "donation_id", donation.ID, "order_id", payload.OrderID)
+			http.Error(w, "verification failed", http.StatusBadGateway)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
 	})
 	mux.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) {
 		if !isAdmin(r, adminSessionSecret) {
@@ -227,11 +383,11 @@ func main() {
 			return
 		}
 
-		setAdminCookie(w, adminSessionSecret)
+		setAdminCookie(w, adminSessionSecret, adminCookieSecure)
 		http.Redirect(w, r, "/admin/projects?notice="+url.QueryEscape("Signed in"), http.StatusSeeOther)
 	})
 	mux.HandleFunc("POST /admin/logout", func(w http.ResponseWriter, r *http.Request) {
-		clearAdminCookie(w)
+		clearAdminCookie(w, adminCookieSecure)
 		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 	})
 	mux.HandleFunc("GET /admin/projects", func(w http.ResponseWriter, r *http.Request) {
@@ -376,6 +532,22 @@ func main() {
 		}
 
 		action := strings.TrimSpace(r.FormValue("action"))
+		if action == "refresh_status" {
+			donation, err := db.FindDonationByID(r.Context(), id)
+			if err != nil {
+				slog.Error("find donation for refresh", "error", err, "id", id)
+				http.Redirect(w, r, "/admin/donations?error="+url.QueryEscape("Donation not found"), http.StatusSeeOther)
+				return
+			}
+			if err := refreshDonationStatus(r.Context(), db, pakasirClientFromEnv(), donation); err != nil {
+				slog.Error("refresh donation status", "error", err, "id", id)
+				http.Redirect(w, r, "/admin/donations?error="+url.QueryEscape("Refresh failed"), http.StatusSeeOther)
+				return
+			}
+			http.Redirect(w, r, "/admin/donations?notice="+url.QueryEscape("Donation status refreshed"), http.StatusSeeOther)
+			return
+		}
+
 		if err := db.UpdateDonationModeration(r.Context(), id, action); err != nil {
 			slog.Error("update donation moderation", "error", err, "id", id, "action", action)
 			http.Redirect(w, r, "/admin/donations?error="+url.QueryEscape("Update failed"), http.StatusSeeOther)
@@ -418,6 +590,14 @@ func env(key, fallback string) string {
 	return value
 }
 
+func defaultBuilder() app.Builder {
+	return app.Builder{
+		Name:   "Said Ramadhan",
+		Handle: "srmdn",
+		Bio:    "I build small, durable tools for publishing, learning, and self-hosted workflows.",
+	}
+}
+
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -453,6 +633,10 @@ func percent(raised, goal int) int {
 
 func eventHasAmount(amount int) bool {
 	return amount > 0
+}
+
+func pakasirOrderID(id int64) string {
+	return "DON-" + strconv.FormatInt(id, 10)
 }
 
 func donationAmountFromRequest(r *http.Request) (int, error) {
@@ -550,23 +734,25 @@ func isAdmin(r *http.Request, secret string) bool {
 	return subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(expected)) == 1
 }
 
-func setAdminCookie(w http.ResponseWriter, secret string) {
+func setAdminCookie(w http.ResponseWriter, secret string, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "admin_session",
 		Value:    adminCookieValue(secret),
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   60 * 60 * 24 * 30,
 	})
 }
 
-func clearAdminCookie(w http.ResponseWriter) {
+func clearAdminCookie(w http.ResponseWriter, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "admin_session",
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})
@@ -576,4 +762,48 @@ func adminCookieValue(secret string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte("admin-session"))
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func pakasirClientFromEnv() payment.PakasirClient {
+	return payment.PakasirClient{
+		BaseURL:      env("PAKASIR_BASE_URL", "https://app.pakasir.com"),
+		APIKey:       env("PAKASIR_API_KEY", ""),
+		MerchantSlug: env("PAKASIR_MERCHANT_SLUG", ""),
+	}
+}
+
+func refreshDonationStatus(ctx context.Context, db *store.Store, client payment.PakasirClient, donation app.Donation) error {
+	if donation.ProviderOrderID == "" {
+		return nil
+	}
+	if !client.Enabled() {
+		return errors.New("pakasir client is not configured")
+	}
+
+	status, err := client.TransactionDetail(ctx, donation.ProviderOrderID, donation.Amount)
+	if err != nil {
+		return err
+	}
+	if status.OrderID != donation.ProviderOrderID {
+		return errors.New("pakasir order id mismatch")
+	}
+	if status.Amount != donation.Amount {
+		return errors.New("pakasir amount mismatch")
+	}
+	if status.Project != client.MerchantSlug {
+		return errors.New("pakasir project mismatch")
+	}
+
+	switch status.Status {
+	case "completed":
+		return db.UpdateDonationProviderStatus(ctx, donation.ID, "paid", "completed", status.PaymentMethod, status.CompletedAt)
+	case "pending":
+		return db.UpdateDonationProviderStatus(ctx, donation.ID, "pending_payment", "pending", status.PaymentMethod, "")
+	case "cancelled":
+		return db.UpdateDonationProviderStatus(ctx, donation.ID, "cancelled", "cancelled", status.PaymentMethod, "")
+	case "expired":
+		return db.UpdateDonationProviderStatus(ctx, donation.ID, "expired", "expired", status.PaymentMethod, "")
+	default:
+		return nil
+	}
 }

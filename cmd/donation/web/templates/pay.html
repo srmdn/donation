@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Payment - {{.Donation.ProjectTitle}}</title>
+  <link rel="stylesheet" href="/static/base.css">
+  <link rel="stylesheet" href="/static/public.css">
+</head>
+<body>
+  {{template "site_nav" .}}
+  <main class="center-shell">
+    <section class="pay-panel">
+      <p class="eyebrow">QRIS payment</p>
+      <h1>Complete your support.</h1>
+      <p class="bio">{{rupiah .Donation.Amount}} for {{.Donation.ProjectTitle}}.</p>
+
+      <div class="pay-meta">
+        <span>Order {{.Donation.ProviderOrderID}}</span>
+        <span>Status {{.Donation.ProviderStatus}}</span>
+        {{if .Donation.ProviderExpiredAt}}<span>Expires {{.Donation.ProviderExpiredAt}}</span>{{end}}
+      </div>
+
+      <div class="pay-summary">
+        <div>
+          <span class="panel-label">Donation</span>
+          <strong>{{rupiah .Donation.Amount}}</strong>
+        </div>
+        <div>
+          <span class="panel-label">Total payment</span>
+          <strong>{{if .Donation.ProviderTotalPayment}}{{rupiah .Donation.ProviderTotalPayment}}{{else}}{{rupiah .Donation.Amount}}{{end}}</strong>
+        </div>
+      </div>
+
+      {{if .Donation.ProviderPaymentURL}}
+        <a class="primary-link" href="{{.Donation.ProviderPaymentURL}}" target="_blank" rel="noreferrer">Open hosted QRIS</a>
+      {{end}}
+
+      {{if .Donation.ProviderPaymentNumber}}
+        <label class="field">
+          <span>QR string</span>
+          <textarea class="code-block" rows="6" readonly>{{.Donation.ProviderPaymentNumber}}</textarea>
+          <small>Fallback only. Hosted QRIS page above is easier for mobile banking scan.</small>
+        </label>
+      {{end}}
+
+      <div class="pay-actions">
+        <a class="secondary-link inline-action" href="/thanks?id={{.Donation.ID}}">I already paid</a>
+        <a class="secondary-link inline-action" href="/projects/{{.Donation.ProjectSlug}}">Back to project</a>
+      </div>
+    </section>
+  </main>
+  {{template "site_footer" .}}
+</body>
+</html>
