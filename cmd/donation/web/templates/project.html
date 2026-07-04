@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Project.Title}} - support {{.Builder.Name}}</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="detail-shell">
+    <nav class="top-nav" aria-label="Breadcrumb">
+      <a href="/">Back to projects</a>
+      <span>@{{.Builder.Handle}}</span>
+    </nav>
+
+    <section class="project-hero accent-{{.Project.Accent}}">
+      <div>
+        <p class="eyebrow">{{.Project.Status}}</p>
+        <h1>{{.Project.Title}}</h1>
+        <p class="lede">{{.Project.Description}}</p>
+      </div>
+
+      <aside class="funding-panel" aria-label="Funding progress">
+        <span class="panel-label">Funding progress</span>
+        <strong>{{rupiah .Project.Raised}}</strong>
+        <span>of {{rupiah .Project.Goal}}</span>
+        <div class="meter">
+          <span style="width: {{percent .Project.Raised .Project.Goal}}%"></span>
+        </div>
+        <p>{{percent .Project.Raised .Project.Goal}} percent funded. Last update {{.Project.LastUpdated}}.</p>
+      </aside>
+    </section>
+
+    <section class="donation-layout">
+      <form class="donation-form" method="post" action="/donations">
+        <input type="hidden" name="project_slug" value="{{.Project.Slug}}">
+
+        <div class="form-heading">
+          <p class="eyebrow">Support this project</p>
+          <h2>Choose amount.</h2>
+        </div>
+
+        <fieldset class="amount-grid">
+          <legend>Suggested amounts</legend>
+          <label>
+            <input type="radio" name="amount" value="25000" checked>
+            <span>Rp25.000</span>
+          </label>
+          <label>
+            <input type="radio" name="amount" value="50000">
+            <span>Rp50.000</span>
+          </label>
+          <label>
+            <input type="radio" name="amount" value="100000">
+            <span>Rp100.000</span>
+          </label>
+        </fieldset>
+
+        <label class="field">
+          <span>Name</span>
+          <input name="name" autocomplete="name" placeholder="Anonymous">
+          <small>Shown on public timeline only if filled.</small>
+        </label>
+
+        <label class="field">
+          <span>Email</span>
+          <input name="email" type="email" autocomplete="email" placeholder="you@example.com">
+          <small>Used later for progress updates. Never public.</small>
+        </label>
+
+        <label class="field">
+          <span>Message</span>
+          <textarea name="message" rows="4" placeholder="Short note for the builder"></textarea>
+        </label>
+
+        <button class="primary-button" type="submit">Continue to mock payment</button>
+      </form>
+
+      <aside class="timeline-preview" aria-label="Project timeline">
+        <p class="eyebrow">Recent activity</p>
+        <ol class="timeline">
+          {{range .Timeline}}
+            {{if eq .Project $.Project.Title}}
+              <li class="timeline-item event-{{.Kind}}">
+                <div class="marker" aria-hidden="true"></div>
+                <div class="event-body">
+                  <div class="event-head">
+                    <span>{{.Project}}</span>
+                    <time>{{.TimeAgo}}</time>
+                  </div>
+                  <h3>{{.Title}}</h3>
+                  <p>{{.Detail}}</p>
+                  {{if eventHasAmount .Amount}}
+                    <strong class="amount">{{rupiah .Amount}}</strong>
+                  {{end}}
+                </div>
+              </li>
+            {{end}}
+          {{end}}
+        </ol>
+      </aside>
+    </section>
+  </main>
+</body>
+</html>

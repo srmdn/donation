@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Builder.Name}} - project support</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="mobile-sticky-bar" aria-label="Quick support">
+    <div class="avatar compact" aria-hidden="true">SR</div>
+    <div class="mobile-sticky-copy">
+      <strong>{{.Builder.Name}}</strong>
+      <span>{{rupiah .TotalRaised}} raised</span>
+    </div>
+    <a class="primary-link compact" href="#projects">Support</a>
+  </div>
+
+  <main class="shell">
+    <aside class="profile" aria-label="Builder profile">
+      <div class="avatar" aria-hidden="true">SR</div>
+      <p class="eyebrow">@{{.Builder.Handle}}</p>
+      <h1>{{.Builder.Name}}</h1>
+      <p class="bio">{{.Builder.Bio}}</p>
+
+      <div class="stats" aria-label="Funding summary">
+        <div>
+          <span class="stat-value">{{rupiah .TotalRaised}}</span>
+          <span class="stat-label">raised</span>
+        </div>
+        <div>
+          <span class="stat-value">{{.SupporterCount}}</span>
+          <span class="stat-label">supporters</span>
+        </div>
+        <div>
+          <span class="stat-value">{{.ActiveProjectNum}}</span>
+          <span class="stat-label">projects</span>
+        </div>
+      </div>
+
+      <a class="primary-link" href="#projects">Support a project</a>
+    </aside>
+
+    <section class="content" aria-label="Projects and timeline">
+      <div class="section-heading">
+        <p class="eyebrow">Active work</p>
+        <h2>Choose where your support goes.</h2>
+      </div>
+
+      <div id="projects" class="project-list">
+        {{range .Projects}}
+          <article class="project-card accent-{{.Accent}}">
+            <div class="project-topline">
+              <span class="status">{{.Status}}</span>
+              <span class="updated">{{.LastUpdated}}</span>
+            </div>
+            <h3>{{.Title}}</h3>
+            <p>{{.Summary}}</p>
+            <div class="meter" aria-label="{{.Title}} funding progress">
+              <span style="width: {{percent .Raised .Goal}}%"></span>
+            </div>
+            <div class="project-money">
+              <strong>{{rupiah .Raised}}</strong>
+              <span>of {{rupiah .Goal}}</span>
+            </div>
+            <a class="secondary-link" href="/projects/{{.Slug}}">Support {{.Title}}</a>
+          </article>
+        {{end}}
+      </div>
+
+      <section class="timeline-section" aria-label="Live timeline">
+        <div class="section-heading compact">
+          <div>
+            <p class="eyebrow">Live timeline</p>
+            <h2>Progress as it happens.</h2>
+          </div>
+          <span class="live-pill">Live</span>
+        </div>
+
+        <ol class="timeline">
+          {{range .Timeline}}
+            <li class="timeline-item event-{{.Kind}}">
+              <div class="marker" aria-hidden="true"></div>
+              <div class="event-body">
+                <div class="event-head">
+                  <span>{{.Project}}</span>
+                  <time>{{.TimeAgo}}</time>
+                </div>
+                <h3>{{.Title}}</h3>
+                <p>{{.Detail}}</p>
+                {{if eventHasAmount .Amount}}
+                  <strong class="amount">{{rupiah .Amount}}</strong>
+                {{end}}
+              </div>
+            </li>
+          {{end}}
+        </ol>
+      </section>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,25 @@
+.local/
+/donation
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Go build/test artifacts
+*.test
+coverage.out
+
+# SQLite
+*.db
+*.db-shm
+*.db-wal
+
+# Local env
+.env
+.env.*
+!.env.example
