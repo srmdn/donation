@@ -12,6 +12,7 @@ Visitors can choose which project to support, see funding progress, and follow a
 - Project detail page with donation form
 - SQLite-backed seed data
 - Mock payment flow for local development
+- Planned Pakasir QRIS integration for production payments
 
 ## Stack
 
@@ -19,6 +20,7 @@ Visitors can choose which project to support, see funding progress, and follow a
 - SQLite
 - Server-rendered HTML templates
 - Plain CSS
+- Pakasir for QRIS payment integration
 
 ## Development
 
@@ -37,13 +39,13 @@ Default address:
 Default SQLite path:
 
 ```txt
-.local/donation.db
+data/donation.db
 ```
 
 Override:
 
 ```sh
-ADDR=127.0.0.1:3000 DB_PATH=.local/dev.db go run ./cmd/donation
+ADDR=127.0.0.1:3000 DB_PATH=data/dev.db go run ./cmd/donation
 ```
 
 ## Roadmap
@@ -52,4 +54,16 @@ ADDR=127.0.0.1:3000 DB_PATH=.local/dev.db go run ./cmd/donation
 - Project management
 - Public update publishing
 - Donation management
-- QRIS payment integration
+- Pakasir QRIS payment integration
+
+## Payments
+
+The current app uses a mock payment flow for local development.
+
+Production payment flow is planned around Pakasir:
+
+- create QRIS transaction from donation form
+- redirect or render payment instructions
+- receive payment webhook
+- verify transaction status
+- mark donation as paid

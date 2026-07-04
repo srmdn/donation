@@ -21,7 +21,7 @@ var assets embed.FS
 
 func main() {
 	addr := env("ADDR", "127.0.0.1:8094")
-	dbPath := env("DB_PATH", ".local/donation.db")
+	dbPath := env("DB_PATH", "data/donation.db")
 	staticFS := mustSubFS(assets, "web/static")
 	db, err := store.Open(dbPath)
 	if err != nil {

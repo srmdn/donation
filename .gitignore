@@ -14,10 +14,10 @@ Thumbs.db
 *.test
 coverage.out
 
-# SQLite
-*.db
-*.db-shm
-*.db-wal
+# SQLite runtime data
+data/*.db
+data/*.db-shm
+data/*.db-wal
 
 # Local env
 .env
