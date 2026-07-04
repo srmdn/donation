@@ -69,6 +69,18 @@
 
           <div class="admin-form-grid">
             <label class="field">
+              <span>Repository URL</span>
+              <input name="repo_url" type="url" value="{{.Editing.RepoURL}}" placeholder="https://github.com/username/project">
+            </label>
+
+            <label class="field">
+              <span>Live demo URL</span>
+              <input name="demo_url" type="url" value="{{.Editing.DemoURL}}" placeholder="https://example.com">
+            </label>
+          </div>
+
+          <div class="admin-form-grid">
+            <label class="field">
               <span>Status</span>
               <input name="status" value="{{if .HasEditing}}{{.Editing.Status}}{{else}}building{{end}}" required>
             </label>

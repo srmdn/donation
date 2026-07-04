@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/srmdn/donation/internal/app"
@@ -61,7 +62,7 @@ func (s *Store) PageDataWithTimelineLimit(ctx context.Context, limit int) (app.P
 		Bio:    "I build small, durable tools for publishing, learning, and self-hosted workflows.",
 	}
 
-	projects, err := s.ListProjects(ctx)
+	projects, err := s.ListFeaturedProjects(ctx, 6)
 	if err != nil {
 		return app.PageData{}, err
 	}
@@ -80,12 +81,16 @@ func (s *Store) PageDataWithTimelineLimit(ctx context.Context, limit int) (app.P
 	if err := s.db.QueryRowContext(ctx, `select count(*) from donations where status = 'paid'`).Scan(&supporters); err != nil {
 		return app.PageData{}, err
 	}
+	activeProjects, err := s.CountActiveProjects(ctx)
+	if err != nil {
+		return app.PageData{}, err
+	}
 
 	return app.PageData{
 		Builder:           builder,
 		TotalRaised:       total,
 		SupporterCount:    supporters,
-		ActiveProjectNum:  len(projects),
+		ActiveProjectNum:  activeProjects,
 		Projects:          projects,
 		Timeline:          timeline,
 		TimelineHasMore:   hasMore,
@@ -97,14 +102,50 @@ func (s *Store) ListProjects(ctx context.Context) ([]app.Project, error) {
 	return s.listProjects(ctx, true)
 }
 
+func (s *Store) ListFeaturedProjects(ctx context.Context, limit int) ([]app.Project, error) {
+	if limit <= 0 {
+		limit = 6
+	}
+	return s.listProjectsWithLimit(ctx, true, limit, 0)
+}
+
+func (s *Store) ListProjectsPage(ctx context.Context, limit, offset int) ([]app.Project, bool, error) {
+	if limit <= 0 {
+		limit = 12
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	projects, err := s.listProjectsWithLimit(ctx, true, limit+1, offset)
+	if err != nil {
+		return nil, false, err
+	}
+	hasNext := len(projects) > limit
+	if hasNext {
+		projects = projects[:limit]
+	}
+	return projects, hasNext, nil
+}
+
 func (s *Store) ListAllProjects(ctx context.Context) ([]app.Project, error) {
 	return s.listProjects(ctx, false)
 }
 
 func (s *Store) listProjects(ctx context.Context, activeOnly bool) ([]app.Project, error) {
+	return s.listProjectsWithLimit(ctx, activeOnly, 0, 0)
+}
+
+func (s *Store) listProjectsWithLimit(ctx context.Context, activeOnly bool, limit, offset int) ([]app.Project, error) {
 	where := ""
 	if activeOnly {
 		where = "where p.is_active = 1"
+	}
+	limitClause := ""
+	args := []any{}
+	if limit > 0 {
+		limitClause = " limit ? offset ?"
+		args = append(args, limit, offset)
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
@@ -117,6 +158,8 @@ func (s *Store) listProjects(ctx context.Context, activeOnly bool) ([]app.Projec
 			p.status,
 			p.goal_amount,
 			p.accent,
+			p.repo_url,
+			p.demo_url,
 			p.is_active,
 			coalesce(sum(case when d.status = 'paid' then d.amount else 0 end), 0) as raised,
 			coalesce(max(case when u.published_at is not null then u.published_at end), p.updated_at) as last_updated
@@ -126,7 +169,7 @@ func (s *Store) listProjects(ctx context.Context, activeOnly bool) ([]app.Projec
 		`+where+`
 		group by p.id
 		order by p.id asc
-	`)
+	`+limitClause, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -145,6 +188,8 @@ func (s *Store) listProjects(ctx context.Context, activeOnly bool) ([]app.Projec
 			&project.Status,
 			&project.Goal,
 			&project.Accent,
+			&project.RepoURL,
+			&project.DemoURL,
 			&project.IsActive,
 			&project.Raised,
 			&updatedAt,
@@ -155,6 +200,14 @@ func (s *Store) listProjects(ctx context.Context, activeOnly bool) ([]app.Projec
 		projects = append(projects, project)
 	}
 	return projects, rows.Err()
+}
+
+func (s *Store) CountActiveProjects(ctx context.Context) (int, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `select count(*) from projects where is_active = 1`).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func (s *Store) FindProject(ctx context.Context, slug string) (app.Project, error) {
@@ -289,18 +342,18 @@ func (s *Store) MarkDonationPaid(ctx context.Context, id int64) error {
 
 func (s *Store) CreateProject(ctx context.Context, project app.Project) error {
 	_, err := s.db.ExecContext(ctx, `
-		insert into projects (title, slug, summary, description, status, goal_amount, accent, is_active, created_at, updated_at)
-		values (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-	`, project.Title, project.Slug, project.Summary, project.Description, project.Status, project.Goal, project.Accent, boolToInt(project.IsActive))
+		insert into projects (title, slug, summary, description, status, goal_amount, accent, repo_url, demo_url, is_active, created_at, updated_at)
+		values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+	`, project.Title, project.Slug, project.Summary, project.Description, project.Status, project.Goal, project.Accent, project.RepoURL, project.DemoURL, boolToInt(project.IsActive))
 	return err
 }
 
 func (s *Store) UpdateProject(ctx context.Context, project app.Project) error {
 	result, err := s.db.ExecContext(ctx, `
 		update projects
-		set title = ?, slug = ?, summary = ?, description = ?, status = ?, goal_amount = ?, accent = ?, is_active = ?, updated_at = datetime('now')
+		set title = ?, slug = ?, summary = ?, description = ?, status = ?, goal_amount = ?, accent = ?, repo_url = ?, demo_url = ?, is_active = ?, updated_at = datetime('now')
 		where id = ?
-	`, project.Title, project.Slug, project.Summary, project.Description, project.Status, project.Goal, project.Accent, boolToInt(project.IsActive), project.ID)
+	`, project.Title, project.Slug, project.Summary, project.Description, project.Status, project.Goal, project.Accent, project.RepoURL, project.DemoURL, boolToInt(project.IsActive), project.ID)
 	if err != nil {
 		return err
 	}
@@ -325,6 +378,8 @@ func (s *Store) migrate(ctx context.Context) error {
 			status text not null,
 			goal_amount integer not null,
 			accent text not null,
+			repo_url text not null default '',
+			demo_url text not null default '',
 			is_active integer not null default 1,
 			created_at text not null,
 			updated_at text not null
@@ -357,7 +412,18 @@ func (s *Store) migrate(ctx context.Context) error {
 			created_at text not null,
 			updated_at text not null
 		);
+
+		alter table projects add column repo_url text not null default '';
+		alter table projects add column demo_url text not null default '';
 	`)
+	if err == nil {
+		return nil
+	}
+
+	// Existing databases will raise duplicate-column errors on repeated alter statements.
+	if strings.Contains(err.Error(), "duplicate column name: repo_url") || strings.Contains(err.Error(), "duplicate column name: demo_url") {
+		return nil
+	}
 	return err
 }
 

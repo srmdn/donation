@@ -20,6 +20,16 @@
         <p class="eyebrow">{{.Project.Status}}</p>
         <h1>{{.Project.Title}}</h1>
         <p class="lede">{{.Project.Description}}</p>
+        {{if or .Project.RepoURL .Project.DemoURL}}
+          <div class="project-links">
+            {{if .Project.RepoURL}}
+              <a class="ghost-link" href="{{.Project.RepoURL}}" target="_blank" rel="noreferrer">Repository</a>
+            {{end}}
+            {{if .Project.DemoURL}}
+              <a class="ghost-link" href="{{.Project.DemoURL}}" target="_blank" rel="noreferrer">Live demo</a>
+            {{end}}
+          </div>
+        {{end}}
       </div>
 
       <aside class="funding-panel" aria-label="Funding progress">

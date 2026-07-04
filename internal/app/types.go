@@ -10,6 +10,8 @@ type Project struct {
 	Raised      int
 	Goal        int
 	Accent      string
+	RepoURL     string
+	DemoURL     string
 	IsActive    bool
 	LastUpdated string
 }
@@ -43,6 +45,18 @@ type PageData struct {
 type ProjectPageData struct {
 	PageData
 	Project Project
+}
+
+type ProjectsIndexPageData struct {
+	Builder        Builder
+	Projects       []Project
+	Page           int
+	HasPrev        bool
+	HasNext        bool
+	PrevPage       int
+	NextPage       int
+	TotalProjects  int
+	SupporterCount int
 }
 
 type AdminLoginPageData struct {

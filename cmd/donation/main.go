@@ -62,6 +62,43 @@ func main() {
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}
 	})
+	mux.HandleFunc("GET /projects", func(w http.ResponseWriter, r *http.Request) {
+		page := pageFromRequest(r)
+		limit := 12
+		offset := (page - 1) * limit
+
+		projects, hasNext, err := db.ListProjectsPage(r.Context(), limit, offset)
+		if err != nil {
+			slog.Error("list projects page", "error", err)
+			http.Error(w, "data load failed", http.StatusInternalServerError)
+			return
+		}
+		totalProjects, err := db.CountActiveProjects(r.Context())
+		if err != nil {
+			slog.Error("count active projects", "error", err)
+			http.Error(w, "data load failed", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := tmpl.ExecuteTemplate(w, "projects.html", app.ProjectsIndexPageData{
+			Builder: app.Builder{
+				Name:   "Said Ramadhan",
+				Handle: "srmdn",
+				Bio:    "I build small, durable tools for publishing, learning, and self-hosted workflows.",
+			},
+			Projects:      projects,
+			Page:          page,
+			HasPrev:       page > 1,
+			HasNext:       hasNext,
+			PrevPage:      page - 1,
+			NextPage:      page + 1,
+			TotalProjects: totalProjects,
+		}); err != nil {
+			slog.Error("render projects index", "error", err)
+			http.Error(w, "render failed", http.StatusInternalServerError)
+		}
+	})
 	mux.HandleFunc("GET /projects/{slug}", func(w http.ResponseWriter, r *http.Request) {
 		data, err := db.PageDataWithTimelineLimit(r.Context(), 6)
 		if err != nil {
@@ -386,6 +423,18 @@ func timelineLimitFromRequest(r *http.Request, fallback int) int {
 	return value
 }
 
+func pageFromRequest(r *http.Request) int {
+	raw := strings.TrimSpace(r.URL.Query().Get("page"))
+	if raw == "" {
+		return 1
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return 1
+	}
+	return value
+}
+
 func projectFromRequest(r *http.Request) (app.Project, error) {
 	if err := r.ParseForm(); err != nil {
 		return app.Project{}, errors.New("invalid form")
@@ -404,6 +453,8 @@ func projectFromRequest(r *http.Request) (app.Project, error) {
 		Status:      strings.TrimSpace(r.FormValue("status")),
 		Goal:        goal,
 		Accent:      strings.TrimSpace(r.FormValue("accent")),
+		RepoURL:     strings.TrimSpace(r.FormValue("repo_url")),
+		DemoURL:     strings.TrimSpace(r.FormValue("demo_url")),
 		IsActive:    r.FormValue("is_active") == "on",
 	}
 
