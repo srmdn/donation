@@ -57,6 +57,10 @@ func main() {
 	adminCookieSecure := strings.HasPrefix(strings.ToLower(publicBaseURL), "https://")
 	paymentMode := env("PAYMENT_MODE", "mock")
 	allowLoggedMagicLink := isLocalPublicBaseURL(publicBaseURL)
+	if !allowLoggedMagicLink && invalidAdminSessionSecret(adminSessionSecret) {
+		slog.Error("invalid admin session secret for non-local deployment")
+		os.Exit(1)
+	}
 	adminMailer := mailer.New(
 		env("SMTP_HOST", ""),
 		envInt("SMTP_PORT", 587),
@@ -1078,6 +1082,11 @@ func isLocalPublicBaseURL(baseURL string) bool {
 	}
 	host := strings.ToLower(parsed.Hostname())
 	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
+func invalidAdminSessionSecret(secret string) bool {
+	secret = strings.TrimSpace(secret)
+	return secret == "" || secret == "change-me"
 }
 
 func clientIP(r *http.Request) string {

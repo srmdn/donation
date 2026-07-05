@@ -72,6 +72,8 @@ Generate a session secret:
 python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
 
+On non-local deployments, the app refuses to start if `ADMIN_SESSION_SECRET` is empty or still `change-me`.
+
 Pakasir placeholders:
 
 ```txt
