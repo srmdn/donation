@@ -66,6 +66,7 @@ func main() {
 	)
 	adminLoginLimiter := newLoginRateLimiter(5, 15*time.Minute)
 	adminVerifyLimiter := newLoginRateLimiter(10, 15*time.Minute)
+	webhookLimiter := newLoginRateLimiter(60, time.Minute)
 	staticFS := mustSubFS(assets, "web/static")
 	db, err := store.Open(dbPath)
 	if err != nil {
@@ -325,6 +326,10 @@ func main() {
 	mux.HandleFunc("POST /api/webhooks/pakasir", func(w http.ResponseWriter, r *http.Request) {
 		if paymentMode != "pakasir" {
 			http.Error(w, "payment mode disabled", http.StatusNotFound)
+			return
+		}
+		if !webhookLimiter.Allow(clientIP(r), time.Now()) {
+			http.Error(w, "too many requests", http.StatusTooManyRequests)
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
