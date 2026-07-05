@@ -722,11 +722,12 @@ func main() {
 			return
 		}
 
-		filterStatus := strings.TrimSpace(r.URL.Query().Get("status"))
-		filterVisibility := strings.TrimSpace(r.URL.Query().Get("visibility"))
-		filterSpam := strings.TrimSpace(r.URL.Query().Get("spam"))
-		filterProjectSlug := strings.TrimSpace(r.URL.Query().Get("project"))
-		searchQuery := strings.TrimSpace(r.URL.Query().Get("q"))
+		filters := adminDonationFilters(r)
+		filterStatus := filters.Get("status")
+		filterVisibility := filters.Get("visibility")
+		filterSpam := filters.Get("spam")
+		filterProjectSlug := filters.Get("project")
+		searchQuery := filters.Get("q")
 
 		donations, err := db.ListAdminDonations(r.Context(), 100, filterStatus, filterVisibility, filterSpam, filterProjectSlug, searchQuery)
 		if err != nil {
@@ -744,13 +745,12 @@ func main() {
 		page := app.AdminDonationsPageData{
 			Donations:         donations,
 			Projects:          projects,
-			Error:             strings.TrimSpace(r.URL.Query().Get("error")),
-			Notice:            strings.TrimSpace(r.URL.Query().Get("notice")),
+			Error:             popAdminDonationFlash(w, r, adminCookieSecure, "error"),
+			Notice:            popAdminDonationFlash(w, r, adminCookieSecure, "notice"),
 			FilterStatus:      filterStatus,
 			FilterVisibility:  filterVisibility,
 			FilterSpam:        filterSpam,
 			FilterProjectSlug: filterProjectSlug,
-			FilterQuery:       r.URL.RawQuery,
 			FilterHasActive:   filterStatus != "" || filterVisibility != "" || filterSpam != "" || filterProjectSlug != "" || searchQuery != "",
 			SearchQuery:       searchQuery,
 			CSRFToken:         csrfToken(w, r, adminSessionSecret, adminCookieSecure),
@@ -776,6 +776,38 @@ func main() {
 			slog.Error("render admin donations", "error", err)
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}
+	})
+	mux.HandleFunc("POST /admin/donations/filters", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(r.Context(), r, db) {
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
+			return
+		}
+		setAdminDonationFilters(w, r, adminCookieSecure)
+		http.Redirect(w, r, "/admin/donations", http.StatusSeeOther)
+	})
+	mux.HandleFunc("POST /admin/donations/filters/reset", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(r.Context(), r, db) {
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
+			return
+		}
+		clearAdminDonationFilters(w, adminCookieSecure)
+		http.Redirect(w, r, "/admin/donations", http.StatusSeeOther)
 	})
 	mux.HandleFunc("POST /admin/projects", func(w http.ResponseWriter, r *http.Request) {
 		if !isAdmin(r.Context(), r, db) {
@@ -938,26 +970,29 @@ func main() {
 		}
 
 		action := strings.TrimSpace(r.FormValue("action"))
-		returnQuery := strings.TrimSpace(r.FormValue("return_query"))
 		if action == "save_note" {
 			if err := db.UpdateDonationModerationNote(r.Context(), id, r.FormValue("moderation_note")); err != nil {
 				slog.Error("update donation moderation note", "error", err, "id", id)
-				http.Redirect(w, r, adminDonationsRedirectPath(returnQuery, "error", "Note save failed"), http.StatusSeeOther)
+				setAdminDonationFlash(w, adminCookieSecure, "error", "Note save failed")
+				http.Redirect(w, r, "/admin/donations", http.StatusSeeOther)
 				return
 			}
-			http.Redirect(w, r, adminDonationsRedirectPath(returnQuery, "notice", "Donation note saved"), http.StatusSeeOther)
+			setAdminDonationFlash(w, adminCookieSecure, "notice", "Donation note saved")
+			http.Redirect(w, r, "/admin/donations", http.StatusSeeOther)
 			return
 		}
 		if action == "refresh_status" {
 			donation, err := db.FindDonationByID(r.Context(), id)
 			if err != nil {
 				slog.Error("find donation for refresh", "error", err, "id", id)
-				http.Redirect(w, r, adminDonationsRedirectPath(returnQuery, "error", "Donation not found"), http.StatusSeeOther)
+				setAdminDonationFlash(w, adminCookieSecure, "error", "Donation not found")
+				http.Redirect(w, r, "/admin/donations", http.StatusSeeOther)
 				return
 			}
 			if err := refreshDonationStatus(r.Context(), db, pakasirClientFromEnv(), donation); err != nil {
 				slog.Error("refresh donation status", "error", err, "id", id)
-				http.Redirect(w, r, adminDonationsRedirectPath(returnQuery, "error", "Refresh failed"), http.StatusSeeOther)
+				setAdminDonationFlash(w, adminCookieSecure, "error", "Refresh failed")
+				http.Redirect(w, r, "/admin/donations", http.StatusSeeOther)
 				return
 			}
 			if updated, err := db.FindDonationByID(r.Context(), id); err == nil {
@@ -965,17 +1000,20 @@ func main() {
 					slog.Error("notify admin donation paid", "error", err, "id", id)
 				}
 			}
-			http.Redirect(w, r, adminDonationsRedirectPath(returnQuery, "notice", "Donation status refreshed"), http.StatusSeeOther)
+			setAdminDonationFlash(w, adminCookieSecure, "notice", "Donation status refreshed")
+			http.Redirect(w, r, "/admin/donations", http.StatusSeeOther)
 			return
 		}
 
 		if err := db.UpdateDonationModeration(r.Context(), id, action); err != nil {
 			slog.Error("update donation moderation", "error", err, "id", id, "action", action)
-			http.Redirect(w, r, adminDonationsRedirectPath(returnQuery, "error", "Update failed"), http.StatusSeeOther)
+			setAdminDonationFlash(w, adminCookieSecure, "error", "Update failed")
+			http.Redirect(w, r, "/admin/donations", http.StatusSeeOther)
 			return
 		}
 
-		http.Redirect(w, r, adminDonationsRedirectPath(returnQuery, "notice", "Donation updated"), http.StatusSeeOther)
+		setAdminDonationFlash(w, adminCookieSecure, "notice", "Donation updated")
+		http.Redirect(w, r, "/admin/donations", http.StatusSeeOther)
 	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -1313,21 +1351,101 @@ func adminRateLimitKey(r *http.Request, value string) string {
 	return clientIP(r) + "|" + strings.ToLower(strings.TrimSpace(value))
 }
 
-func adminDonationsPath(rawQuery string) string {
-	rawQuery = strings.TrimSpace(rawQuery)
-	if rawQuery == "" {
-		return "/admin/donations"
+const (
+	adminDonationFiltersCookie = "admin_donations_filters"
+	adminDonationNoticeCookie  = "admin_donations_notice"
+	adminDonationErrorCookie   = "admin_donations_error"
+)
+
+func adminDonationFilters(r *http.Request) url.Values {
+	values := url.Values{}
+	cookie, err := r.Cookie(adminDonationFiltersCookie)
+	if err != nil {
+		return values
 	}
-	return "/admin/donations?" + rawQuery
+	stored, err := url.ParseQuery(cookie.Value)
+	if err != nil {
+		return values
+	}
+	for _, key := range []string{"q", "status", "visibility", "spam", "project"} {
+		value := strings.TrimSpace(stored.Get(key))
+		if value != "" {
+			values.Set(key, value)
+		}
+	}
+	return values
 }
 
-func adminDonationsRedirectPath(rawQuery, key, value string) string {
-	path := adminDonationsPath(rawQuery)
-	separator := "?"
-	if strings.Contains(path, "?") {
-		separator = "&"
+func setAdminDonationFilters(w http.ResponseWriter, r *http.Request, secure bool) {
+	values := url.Values{}
+	for _, key := range []string{"q", "status", "visibility", "spam", "project"} {
+		value := strings.TrimSpace(r.FormValue(key))
+		if value != "" {
+			values.Set(key, value)
+		}
 	}
-	return path + separator + key + "=" + url.QueryEscape(value)
+	http.SetCookie(w, &http.Cookie{
+		Name:     adminDonationFiltersCookie,
+		Value:    values.Encode(),
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   60 * 60 * 24 * 30,
+	})
+}
+
+func clearAdminDonationFilters(w http.ResponseWriter, secure bool) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     adminDonationFiltersCookie,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
+}
+
+func setAdminDonationFlash(w http.ResponseWriter, secure bool, kind, value string) {
+	name := adminDonationNoticeCookie
+	if kind == "error" {
+		name = adminDonationErrorCookie
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     name,
+		Value:    url.QueryEscape(strings.TrimSpace(value)),
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   20,
+	})
+}
+
+func popAdminDonationFlash(w http.ResponseWriter, r *http.Request, secure bool, kind string) string {
+	name := adminDonationNoticeCookie
+	if kind == "error" {
+		name = adminDonationErrorCookie
+	}
+	cookie, err := r.Cookie(name)
+	if err != nil {
+		return ""
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     name,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
+	value, err := url.QueryUnescape(cookie.Value)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(value)
 }
 
 func isDevelopmentEnv(appEnv string) bool {

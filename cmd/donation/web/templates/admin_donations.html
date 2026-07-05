@@ -52,7 +52,8 @@
         </div>
       </div>
 
-      <form class="admin-filter-form" method="get" action="/admin/donations">
+      <form class="admin-filter-form" method="post" action="/admin/donations/filters">
+        <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
         <label class="field">
           <span>Search</span>
           <input type="search" name="q" value="{{.SearchQuery}}" placeholder="Donor, email, order, project">
@@ -95,7 +96,7 @@
         <div class="admin-filter-actions">
           <button class="primary-button" type="submit">Apply</button>
           {{if .FilterHasActive}}
-            <a class="secondary-button" href="/admin/donations">Reset</a>
+            <button class="secondary-button" type="submit" formaction="/admin/donations/filters/reset">Reset</button>
           {{end}}
         </div>
       </form>
@@ -111,49 +112,55 @@
               <p>{{rupiah .Amount}} for <a href="/projects/{{.ProjectSlug}}">{{.ProjectTitle}}</a></p>
               <div class="admin-row-meta">
                 <span>{{.CreatedAt}}</span>
-                <span>provider: {{.Provider}}</span>
-                <span>provider status: {{if .ProviderStatus}}{{.ProviderStatus}}{{else}}-{{end}}</span>
                 <span>visibility: {{.Visibility}}</span>
                 <span>spam: {{if .IsSpam}}yes{{else}}no{{end}}</span>
+                <span>provider: {{.Provider}}</span>
               </div>
-              {{if .DonorEmail}}
-                <div class="admin-row-meta">
-                  <span>{{.DonorEmail}}</span>
+              <details class="admin-donation-details">
+                <summary>Detail</summary>
+                <div class="admin-donation-detail-grid">
+                  <div class="admin-row-meta">
+                    <span>provider status: {{if .ProviderStatus}}{{.ProviderStatus}}{{else}}-{{end}}</span>
+                    {{if .ProviderOrderID}}<span>order: {{.ProviderOrderID}}</span>{{end}}
+                    {{if .PaidAt}}<span>paid: {{.PaidAt}}</span>{{end}}
+                    {{if .UpdatedAt}}<span>updated: {{.UpdatedAt}}</span>{{end}}
+                  </div>
+                  {{if .DonorEmail}}
+                    <div class="admin-row-meta">
+                      <span>{{.DonorEmail}}</span>
+                    </div>
+                  {{end}}
+                  {{if .Message}}
+                    <p>{{.Message}}</p>
+                  {{end}}
+                  <form class="admin-inline-note-form" method="post" action="/admin/donations/{{.ID}}">
+                    <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
+                    <input type="hidden" name="action" value="save_note">
+                    <label class="field">
+                      <span>Internal note</span>
+                      <textarea name="moderation_note" rows="3" placeholder="Test payment, donor request, manual verification, refund note">{{.ModerationNote}}</textarea>
+                    </label>
+                    <button class="secondary-button" type="submit">Save note</button>
+                  </form>
                 </div>
-              {{end}}
-              {{if .Message}}
-                <p>{{.Message}}</p>
-              {{end}}
-              <form class="admin-inline-note-form" method="post" action="/admin/donations/{{.ID}}">
-                <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
-                <input type="hidden" name="return_query" value="{{$.FilterQuery}}">
-                <input type="hidden" name="action" value="save_note">
-                <label class="field">
-                  <span>Internal note</span>
-                  <textarea name="moderation_note" rows="3" placeholder="Test payment, donor request, manual verification, refund note">{{.ModerationNote}}</textarea>
-                </label>
-                <button class="secondary-button" type="submit">Save note</button>
-              </form>
+              </details>
             </div>
 
             <div class="admin-row-actions">
               {{if and (eq .Provider "pakasir") .ProviderOrderID}}
                 <form method="post" action="/admin/donations/{{.ID}}">
                   <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
-                  <input type="hidden" name="return_query" value="{{$.FilterQuery}}">
                   <input type="hidden" name="action" value="refresh_status">
                   <button class="ghost-link button-link" type="submit">Refresh</button>
                 </form>
               {{end}}
               <form method="post" action="/admin/donations/{{.ID}}">
                 <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
-                <input type="hidden" name="return_query" value="{{$.FilterQuery}}">
                 <input type="hidden" name="action" value="{{if eq .Visibility "public"}}hide_public{{else}}show_public{{end}}">
                 <button class="ghost-link button-link" type="submit">{{if eq .Visibility "public"}}Hide{{else}}Show{{end}}</button>
               </form>
               <form method="post" action="/admin/donations/{{.ID}}">
                 <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
-                <input type="hidden" name="return_query" value="{{$.FilterQuery}}">
                 <input type="hidden" name="action" value="{{if .IsSpam}}unmark_spam{{else}}mark_spam{{end}}">
                 <button class="ghost-link button-link" type="submit">{{if .IsSpam}}Unspam{{else}}Spam{{end}}</button>
               </form>

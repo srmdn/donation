@@ -151,7 +151,6 @@ type AdminDonationsPageData struct {
 	FilterVisibility  string
 	FilterSpam        string
 	FilterProjectSlug string
-	FilterQuery       string
 	FilterHasActive   bool
 	SearchQuery       string
 	CSRFToken         string

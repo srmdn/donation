@@ -152,10 +152,37 @@
   gap: 10px;
 }
 
+.admin-donation-row {
+  align-items: start;
+}
+
+.admin-donation-details {
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.admin-donation-details summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  list-style: none;
+}
+
+.admin-donation-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.admin-donation-detail-grid {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
 .admin-inline-note-form {
   display: grid;
   gap: 10px;
-  margin-top: 14px;
   max-width: 520px;
 }
 
