@@ -10,6 +10,7 @@ import (
 
 type Mailer interface {
 	SendMagicLink(to, link string) error
+	Configured() bool
 }
 
 func New(host string, port int, username, password, from string) Mailer {
@@ -30,6 +31,10 @@ type LogMailer struct{}
 func (LogMailer) SendMagicLink(to, link string) error {
 	log.Printf("magic login link for %s: %s", to, link)
 	return nil
+}
+
+func (LogMailer) Configured() bool {
+	return false
 }
 
 type SMTPMailer struct {
@@ -56,4 +61,8 @@ func (m SMTPMailer) SendMagicLink(to, link string) error {
 		"This link expires in 15 minutes. If you did not request it, you can ignore this email.",
 	}, "\r\n")
 	return smtp.SendMail(addr, auth, m.From, []string{to}, []byte(msg))
+}
+
+func (m SMTPMailer) Configured() bool {
+	return true
 }

@@ -56,6 +56,7 @@ func main() {
 	adminSessionSecret := env("ADMIN_SESSION_SECRET", "change-me")
 	adminCookieSecure := strings.HasPrefix(strings.ToLower(publicBaseURL), "https://")
 	paymentMode := env("PAYMENT_MODE", "mock")
+	allowLoggedMagicLink := isLocalPublicBaseURL(publicBaseURL)
 	adminMailer := mailer.New(
 		env("SMTP_HOST", ""),
 		envInt("SMTP_PORT", 587),
@@ -433,6 +434,11 @@ func main() {
 
 		notice := "If that email can access admin, a sign-in link is ready."
 		if subtle.ConstantTimeCompare([]byte(email), []byte(adminEmail)) == 1 {
+			if !adminMailer.Configured() && !allowLoggedMagicLink {
+				slog.Error("admin mail delivery is not configured for this environment")
+				http.Redirect(w, r, "/admin/login?error="+url.QueryEscape("Admin mail delivery is not configured"), http.StatusSeeOther)
+				return
+			}
 			token, err := generateLoginToken()
 			if err != nil {
 				slog.Error("generate admin login token", "error", err)
@@ -1054,6 +1060,19 @@ func adminMagicLoginURL(baseURL, token string) string {
 
 func adminRateLimitKey(r *http.Request, value string) string {
 	return clientIP(r) + "|" + strings.ToLower(strings.TrimSpace(value))
+}
+
+func isLocalPublicBaseURL(baseURL string) bool {
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		return true
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 func clientIP(r *http.Request) string {

@@ -107,7 +107,8 @@ Admin access now uses an email magic link.
 
 - `ADMIN_EMAIL` controls who can request the link
 - the sign-in token is one-time and expires after 15 minutes
-- if SMTP is not configured in local development, the sign-in link is written to the app log
+- if SMTP is not configured and `PUBLIC_BASE_URL` is local (`localhost` or `127.0.0.1`), the sign-in link is written to the app log
+- on non-local deployments, admin login fails closed unless SMTP is configured
 
 ## Donation Amounts
 
