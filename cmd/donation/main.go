@@ -565,7 +565,6 @@ func main() {
 			http.Error(w, "data load failed", http.StatusInternalServerError)
 			return
 		}
-
 		page := app.AdminProjectsPageData{
 			Projects:  projects,
 			Error:     strings.TrimSpace(r.URL.Query().Get("error")),
@@ -589,10 +588,54 @@ func main() {
 				}
 			}
 		}
-
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, "admin_projects.html", page); err != nil {
 			slog.Error("render admin projects", "error", err)
+			http.Error(w, "render failed", http.StatusInternalServerError)
+		}
+	})
+	mux.HandleFunc("GET /admin/updates", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(r.Context(), r, db) {
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+
+		projects, err := db.ListAllProjects(r.Context())
+		if err != nil {
+			slog.Error("list projects for admin updates", "error", err)
+			http.Error(w, "data load failed", http.StatusInternalServerError)
+			return
+		}
+		updates, err := db.ListAdminProjectUpdates(r.Context(), 30)
+		if err != nil {
+			slog.Error("list admin project updates", "error", err)
+			http.Error(w, "data load failed", http.StatusInternalServerError)
+			return
+		}
+
+		page := app.AdminUpdatesPageData{
+			Projects:    projects,
+			Updates:     updates,
+			Error:       strings.TrimSpace(r.URL.Query().Get("error")),
+			Notice:      strings.TrimSpace(r.URL.Query().Get("notice")),
+			UpdateTitle: strings.TrimSpace(r.URL.Query().Get("update_title")),
+			UpdateBody:  strings.TrimSpace(r.URL.Query().Get("update_body")),
+			CSRFToken:   csrfToken(w, r, adminSessionSecret, adminCookieSecure),
+		}
+		page.UpdateProjectID, _ = strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("update_project_id")), 10, 64)
+		page.UpdateEditingID, _ = strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("update_edit")), 10, 64)
+		if page.UpdateEditingID > 0 && page.UpdateTitle == "" && page.UpdateBody == "" && page.UpdateProjectID == 0 {
+			update, err := db.FindProjectUpdateByID(r.Context(), page.UpdateEditingID)
+			if err == nil {
+				page.UpdateProjectID = update.ProjectID
+				page.UpdateTitle = update.Title
+				page.UpdateBody = update.Body
+			}
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := tmpl.ExecuteTemplate(w, "admin_updates.html", page); err != nil {
+			slog.Error("render admin updates", "error", err)
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}
 	})
@@ -602,18 +645,38 @@ func main() {
 			return
 		}
 
-		donations, err := db.ListAdminDonations(r.Context(), 100)
+		filterStatus := strings.TrimSpace(r.URL.Query().Get("status"))
+		filterVisibility := strings.TrimSpace(r.URL.Query().Get("visibility"))
+		filterSpam := strings.TrimSpace(r.URL.Query().Get("spam"))
+		filterProjectSlug := strings.TrimSpace(r.URL.Query().Get("project"))
+		searchQuery := strings.TrimSpace(r.URL.Query().Get("q"))
+
+		donations, err := db.ListAdminDonations(r.Context(), 100, filterStatus, filterVisibility, filterSpam, filterProjectSlug, searchQuery)
 		if err != nil {
 			slog.Error("list admin donations", "error", err)
 			http.Error(w, "data load failed", http.StatusInternalServerError)
 			return
 		}
+		projects, err := db.ListAllProjects(r.Context())
+		if err != nil {
+			slog.Error("list projects for admin donations", "error", err)
+			http.Error(w, "data load failed", http.StatusInternalServerError)
+			return
+		}
 
 		page := app.AdminDonationsPageData{
-			Donations: donations,
-			Error:     strings.TrimSpace(r.URL.Query().Get("error")),
-			Notice:    strings.TrimSpace(r.URL.Query().Get("notice")),
-			CSRFToken: csrfToken(w, r, adminSessionSecret, adminCookieSecure),
+			Donations:         donations,
+			Projects:          projects,
+			Error:             strings.TrimSpace(r.URL.Query().Get("error")),
+			Notice:            strings.TrimSpace(r.URL.Query().Get("notice")),
+			FilterStatus:      filterStatus,
+			FilterVisibility:  filterVisibility,
+			FilterSpam:        filterSpam,
+			FilterProjectSlug: filterProjectSlug,
+			FilterQuery:       r.URL.RawQuery,
+			FilterHasActive:   filterStatus != "" || filterVisibility != "" || filterSpam != "" || filterProjectSlug != "" || searchQuery != "",
+			SearchQuery:       searchQuery,
+			CSRFToken:         csrfToken(w, r, adminSessionSecret, adminCookieSecure),
 		}
 		for _, donation := range donations {
 			page.TotalCount++
@@ -696,6 +759,87 @@ func main() {
 		}
 		http.Redirect(w, r, "/admin/projects?notice="+url.QueryEscape("Project updated"), http.StatusSeeOther)
 	})
+	mux.HandleFunc("POST /admin/project-updates", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(r.Context(), r, db) {
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
+			return
+		}
+
+		projectID, err := strconv.ParseInt(strings.TrimSpace(r.FormValue("project_id")), 10, 64)
+		if err != nil || projectID <= 0 {
+			http.Redirect(w, r, "/admin/updates?error="+url.QueryEscape("Project is required")+"&update_title="+url.QueryEscape(strings.TrimSpace(r.FormValue("title")))+"&update_body="+url.QueryEscape(strings.TrimSpace(r.FormValue("body"))), http.StatusSeeOther)
+			return
+		}
+		title := strings.TrimSpace(r.FormValue("title"))
+		body := strings.TrimSpace(r.FormValue("body"))
+		if title == "" || body == "" {
+			http.Redirect(w, r, "/admin/updates?error="+url.QueryEscape("Update title and body are required")+"&update_project_id="+url.QueryEscape(strconv.FormatInt(projectID, 10))+"&update_title="+url.QueryEscape(title)+"&update_body="+url.QueryEscape(body), http.StatusSeeOther)
+			return
+		}
+		if err := db.CreateProjectUpdate(r.Context(), projectID, title, body); err != nil {
+			slog.Error("create project update", "error", err, "project_id", projectID)
+			http.Redirect(w, r, "/admin/updates?error="+url.QueryEscape("Update publish failed")+"&update_project_id="+url.QueryEscape(strconv.FormatInt(projectID, 10))+"&update_title="+url.QueryEscape(title)+"&update_body="+url.QueryEscape(body), http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/admin/updates?notice="+url.QueryEscape("Project update published"), http.StatusSeeOther)
+	})
+	mux.HandleFunc("POST /admin/project-updates/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(r.Context(), r, db) {
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
+			return
+		}
+
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id <= 0 {
+			http.Error(w, "invalid update id", http.StatusBadRequest)
+			return
+		}
+
+		action := strings.TrimSpace(r.FormValue("action"))
+		if action == "delete" {
+			if err := db.DeleteProjectUpdate(r.Context(), id); err != nil {
+				slog.Error("delete project update", "error", err, "id", id)
+				http.Redirect(w, r, "/admin/updates?error="+url.QueryEscape("Update delete failed"), http.StatusSeeOther)
+				return
+			}
+			http.Redirect(w, r, "/admin/updates?notice="+url.QueryEscape("Project update deleted"), http.StatusSeeOther)
+			return
+		}
+
+		projectID, err := strconv.ParseInt(strings.TrimSpace(r.FormValue("project_id")), 10, 64)
+		if err != nil || projectID <= 0 {
+			http.Redirect(w, r, "/admin/updates?error="+url.QueryEscape("Project is required")+"&update_edit="+url.QueryEscape(strconv.FormatInt(id, 10))+"&update_title="+url.QueryEscape(strings.TrimSpace(r.FormValue("title")))+"&update_body="+url.QueryEscape(strings.TrimSpace(r.FormValue("body"))), http.StatusSeeOther)
+			return
+		}
+		title := strings.TrimSpace(r.FormValue("title"))
+		body := strings.TrimSpace(r.FormValue("body"))
+		if title == "" || body == "" {
+			http.Redirect(w, r, "/admin/updates?error="+url.QueryEscape("Update title and body are required")+"&update_edit="+url.QueryEscape(strconv.FormatInt(id, 10))+"&update_project_id="+url.QueryEscape(strconv.FormatInt(projectID, 10))+"&update_title="+url.QueryEscape(title)+"&update_body="+url.QueryEscape(body), http.StatusSeeOther)
+			return
+		}
+		if err := db.UpdateProjectUpdate(r.Context(), id, projectID, title, body); err != nil {
+			slog.Error("update project update", "error", err, "id", id, "project_id", projectID)
+			http.Redirect(w, r, "/admin/updates?error="+url.QueryEscape("Update save failed")+"&update_edit="+url.QueryEscape(strconv.FormatInt(id, 10))+"&update_project_id="+url.QueryEscape(strconv.FormatInt(projectID, 10))+"&update_title="+url.QueryEscape(title)+"&update_body="+url.QueryEscape(body), http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/admin/updates?notice="+url.QueryEscape("Project update saved"), http.StatusSeeOther)
+	})
 	mux.HandleFunc("POST /admin/donations/{id}", func(w http.ResponseWriter, r *http.Request) {
 		if !isAdmin(r.Context(), r, db) {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
@@ -717,29 +861,39 @@ func main() {
 		}
 
 		action := strings.TrimSpace(r.FormValue("action"))
+		returnQuery := strings.TrimSpace(r.FormValue("return_query"))
+		if action == "save_note" {
+			if err := db.UpdateDonationModerationNote(r.Context(), id, r.FormValue("moderation_note")); err != nil {
+				slog.Error("update donation moderation note", "error", err, "id", id)
+				http.Redirect(w, r, adminDonationsRedirectPath(returnQuery, "error", "Note save failed"), http.StatusSeeOther)
+				return
+			}
+			http.Redirect(w, r, adminDonationsRedirectPath(returnQuery, "notice", "Donation note saved"), http.StatusSeeOther)
+			return
+		}
 		if action == "refresh_status" {
 			donation, err := db.FindDonationByID(r.Context(), id)
 			if err != nil {
 				slog.Error("find donation for refresh", "error", err, "id", id)
-				http.Redirect(w, r, "/admin/donations?error="+url.QueryEscape("Donation not found"), http.StatusSeeOther)
+				http.Redirect(w, r, adminDonationsRedirectPath(returnQuery, "error", "Donation not found"), http.StatusSeeOther)
 				return
 			}
 			if err := refreshDonationStatus(r.Context(), db, pakasirClientFromEnv(), donation); err != nil {
 				slog.Error("refresh donation status", "error", err, "id", id)
-				http.Redirect(w, r, "/admin/donations?error="+url.QueryEscape("Refresh failed"), http.StatusSeeOther)
+				http.Redirect(w, r, adminDonationsRedirectPath(returnQuery, "error", "Refresh failed"), http.StatusSeeOther)
 				return
 			}
-			http.Redirect(w, r, "/admin/donations?notice="+url.QueryEscape("Donation status refreshed"), http.StatusSeeOther)
+			http.Redirect(w, r, adminDonationsRedirectPath(returnQuery, "notice", "Donation status refreshed"), http.StatusSeeOther)
 			return
 		}
 
 		if err := db.UpdateDonationModeration(r.Context(), id, action); err != nil {
 			slog.Error("update donation moderation", "error", err, "id", id, "action", action)
-			http.Redirect(w, r, "/admin/donations?error="+url.QueryEscape("Update failed"), http.StatusSeeOther)
+			http.Redirect(w, r, adminDonationsRedirectPath(returnQuery, "error", "Update failed"), http.StatusSeeOther)
 			return
 		}
 
-		http.Redirect(w, r, "/admin/donations?notice="+url.QueryEscape("Donation updated"), http.StatusSeeOther)
+		http.Redirect(w, r, adminDonationsRedirectPath(returnQuery, "notice", "Donation updated"), http.StatusSeeOther)
 	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -1069,6 +1223,23 @@ func adminMagicLoginURL(baseURL, token string) string {
 
 func adminRateLimitKey(r *http.Request, value string) string {
 	return clientIP(r) + "|" + strings.ToLower(strings.TrimSpace(value))
+}
+
+func adminDonationsPath(rawQuery string) string {
+	rawQuery = strings.TrimSpace(rawQuery)
+	if rawQuery == "" {
+		return "/admin/donations"
+	}
+	return "/admin/donations?" + rawQuery
+}
+
+func adminDonationsRedirectPath(rawQuery, key, value string) string {
+	path := adminDonationsPath(rawQuery)
+	separator := "?"
+	if strings.Contains(path, "?") {
+		separator = "&"
+	}
+	return path + separator + key + "=" + url.QueryEscape(value)
 }
 
 func isLocalPublicBaseURL(baseURL string) bool {

@@ -16,20 +16,21 @@
         <h1>Projects</h1>
       </div>
 
-        <div class="admin-actions">
-          <div class="admin-stats">
-            <span>{{len .Projects}} total</span>
-            <span>{{.ActiveCount}} active</span>
-          </div>
-          <form method="post" action="/admin/logout">
-            <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
-            <button class="secondary-button" type="submit">Sign out</button>
-          </form>
+      <div class="admin-actions">
+        <div class="admin-stats">
+          <span>{{len .Projects}} total</span>
+          <span>{{.ActiveCount}} active</span>
         </div>
+        <form method="post" action="/admin/logout">
+          <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+          <button class="secondary-button" type="submit">Sign out</button>
+        </form>
+      </div>
     </header>
 
     <nav class="admin-subnav" aria-label="Admin">
       <a class="ghost-link current" href="/admin/projects">Projects</a>
+      <a class="ghost-link" href="/admin/updates">Updates</a>
       <a class="ghost-link" href="/admin/donations">Donations</a>
     </nav>
 

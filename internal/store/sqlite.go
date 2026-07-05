@@ -470,12 +470,41 @@ func (s *Store) UpdateDonationProviderStatus(ctx context.Context, id int64, stat
 	return err
 }
 
-func (s *Store) ListAdminDonations(ctx context.Context, limit int) ([]app.Donation, error) {
+func (s *Store) ListAdminDonations(ctx context.Context, limit int, status, visibility, spam, projectSlug, search string) ([]app.Donation, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
+	where := []string{"1 = 1"}
+	args := []any{}
+
+	if status != "" {
+		where = append(where, "d.status = ?")
+		args = append(args, status)
+	}
+	if visibility != "" {
+		where = append(where, "d.visibility = ?")
+		args = append(args, visibility)
+	}
+	if spam == "spam" {
+		where = append(where, "d.is_spam = 1")
+	}
+	if spam == "clean" {
+		where = append(where, "d.is_spam = 0")
+	}
+	if projectSlug != "" {
+		where = append(where, "p.slug = ?")
+		args = append(args, projectSlug)
+	}
+	search = strings.TrimSpace(strings.ToLower(search))
+	if search != "" {
+		where = append(where, `(lower(d.donor_name) like ? or lower(d.donor_email) like ? or lower(d.provider_order_id) like ? or lower(p.title) like ?)`)
+		like := "%" + search + "%"
+		args = append(args, like, like, like, like)
+	}
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
 		select
 			d.id,
 			d.project_id,
@@ -505,9 +534,10 @@ func (s *Store) ListAdminDonations(ctx context.Context, limit int) ([]app.Donati
 			d.updated_at
 		from donations d
 		join projects p on p.id = d.project_id
+		where %s
 		order by d.created_at desc, d.id desc
 		limit ?
-	`, limit)
+	`, strings.Join(where, " and ")), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -601,6 +631,25 @@ func (s *Store) UpdateDonationModeration(ctx context.Context, id int64, action s
 	return nil
 }
 
+func (s *Store) UpdateDonationModerationNote(ctx context.Context, id int64, note string) error {
+	result, err := s.db.ExecContext(ctx, `
+		update donations
+		set moderation_note = ?, updated_at = datetime('now')
+		where id = ?
+	`, strings.TrimSpace(note), id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (s *Store) CreateProject(ctx context.Context, project app.Project) error {
 	_, err := s.db.ExecContext(ctx, `
 		insert into projects (title, slug, summary, description, status, goal_amount, accent, repo_url, demo_url, is_active, created_at, updated_at)
@@ -626,6 +675,122 @@ func (s *Store) UpdateProject(ctx context.Context, project app.Project) error {
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+func (s *Store) CreateProjectUpdate(ctx context.Context, projectID int64, title, body string) error {
+	_, err := s.db.ExecContext(ctx, `
+		insert into project_updates (project_id, title, body, published_at, created_at, updated_at)
+		values (?, ?, ?, datetime('now'), datetime('now'), datetime('now'))
+	`, projectID, strings.TrimSpace(title), strings.TrimSpace(body))
+	return err
+}
+
+func (s *Store) FindProjectUpdateByID(ctx context.Context, id int64) (app.ProjectUpdate, error) {
+	row := s.db.QueryRowContext(ctx, `
+		select
+			u.id,
+			u.project_id,
+			p.slug,
+			p.title,
+			u.title,
+			u.body,
+			u.published_at
+		from project_updates u
+		join projects p on p.id = u.project_id
+		where u.id = ?
+	`, id)
+
+	var update app.ProjectUpdate
+	err := row.Scan(
+		&update.ID,
+		&update.ProjectID,
+		&update.ProjectSlug,
+		&update.ProjectTitle,
+		&update.Title,
+		&update.Body,
+		&update.PublishedAt,
+	)
+	if err != nil {
+		return app.ProjectUpdate{}, err
+	}
+	return update, nil
+}
+
+func (s *Store) UpdateProjectUpdate(ctx context.Context, id, projectID int64, title, body string) error {
+	result, err := s.db.ExecContext(ctx, `
+		update project_updates
+		set project_id = ?, title = ?, body = ?, updated_at = datetime('now')
+		where id = ?
+	`, projectID, strings.TrimSpace(title), strings.TrimSpace(body), id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) DeleteProjectUpdate(ctx context.Context, id int64) error {
+	result, err := s.db.ExecContext(ctx, `delete from project_updates where id = ?`, id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) ListAdminProjectUpdates(ctx context.Context, limit int) ([]app.ProjectUpdate, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		select
+			u.id,
+			u.project_id,
+			p.slug,
+			p.title,
+			u.title,
+			u.body,
+			u.published_at
+		from project_updates u
+		join projects p on p.id = u.project_id
+		order by u.published_at desc, u.id desc
+		limit ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var updates []app.ProjectUpdate
+	for rows.Next() {
+		var update app.ProjectUpdate
+		if err := rows.Scan(
+			&update.ID,
+			&update.ProjectID,
+			&update.ProjectSlug,
+			&update.ProjectTitle,
+			&update.Title,
+			&update.Body,
+			&update.PublishedAt,
+		); err != nil {
+			return nil, err
+		}
+		updates = append(updates, update)
+	}
+	return updates, rows.Err()
 }
 
 var ErrInvalidAdminLoginToken = errors.New("invalid admin login token")
@@ -893,22 +1058,38 @@ func (s *Store) seed(ctx context.Context) error {
 	}
 
 	donations := []struct {
-		slug    string
-		name    string
-		message string
-		amount  int
-		paidAt  string
+		slug           string
+		name           string
+		email          string
+		message        string
+		amount         int
+		status         string
+		visibility     string
+		isSpam         int
+		provider       string
+		providerOrder  string
+		providerStatus string
+		paidAt         string
+		createdAt      string
 	}{
-		{"foliocms", "", "For the theme system and docs work.", 100000, "2026-07-04 03:48:00"},
-		{"hifzlink", "Rafi", "Keep going on teacher dashboard.", 75000, "2026-07-03 09:00:00"},
-		{"foliocms", "Naufal", "Self-hosted CMS matters.", 245000, "2026-07-02 16:20:00"},
-		{"plink", "Mira", "For export/import support.", 125000, "2026-06-30 11:10:00"},
+		{"foliocms", "", "", "For the theme system and docs work.", 100000, "paid", "public", 0, "mock", "", "completed", "2026-07-04 03:48:00", "2026-07-04 03:48:00"},
+		{"hifzlink", "Rafi", "rafi@example.com", "Keep going on teacher dashboard.", 75000, "paid", "public", 0, "mock", "", "completed", "2026-07-03 09:00:00", "2026-07-03 09:00:00"},
+		{"foliocms", "Naufal", "naufal@example.com", "Self-hosted CMS matters.", 245000, "paid", "hidden", 0, "mock", "", "completed", "2026-07-02 16:20:00", "2026-07-02 16:20:00"},
+		{"plink", "Mira", "mira@example.com", "For export/import support.", 125000, "paid", "public", 1, "mock", "", "completed", "2026-06-30 11:10:00", "2026-06-30 11:10:00"},
+		{"foliocms", "Alya", "alya@example.com", "Testing QRIS payment flow.", 50000, "pending_payment", "public", 0, "pakasir", "DON-SEED-001", "pending", "", "2026-07-04 07:15:00"},
+		{"hifzlink", "Bima", "bima@example.com", "Expired payment sample.", 25000, "expired", "public", 0, "pakasir", "DON-SEED-002", "expired", "", "2026-07-03 12:40:00"},
+		{"plink", "Sinta", "sinta@example.com", "Cancelled by donor.", 30000, "cancelled", "hidden", 0, "pakasir", "DON-SEED-003", "cancelled", "", "2026-07-01 10:05:00"},
 	}
 	for _, donation := range donations {
 		_, err := tx.ExecContext(ctx, `
-			insert into donations (project_id, donor_name, message, amount, currency, status, provider, paid_at, created_at, updated_at)
-			values (?, ?, ?, ?, 'IDR', 'paid', 'mock', ?, ?, ?)
-		`, projectIDs[donation.slug], donation.name, donation.message, donation.amount, donation.paidAt, donation.paidAt, donation.paidAt)
+			insert into donations (
+				project_id, donor_name, donor_email, message, amount, currency,
+				status, visibility, is_spam, moderation_note,
+				provider, provider_order_id, provider_status,
+				paid_at, created_at, updated_at
+			)
+			values (?, ?, ?, ?, ?, 'IDR', ?, ?, ?, '', ?, ?, ?, ?, ?, ?)
+		`, projectIDs[donation.slug], donation.name, donation.email, donation.message, donation.amount, donation.status, donation.visibility, donation.isSpam, donation.provider, donation.providerOrder, donation.providerStatus, nullIfEmpty(donation.paidAt), donation.createdAt, donation.createdAt)
 		if err != nil {
 			return err
 		}

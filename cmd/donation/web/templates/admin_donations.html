@@ -33,6 +33,7 @@
 
     <nav class="admin-subnav" aria-label="Admin">
       <a class="ghost-link" href="/admin/projects">Projects</a>
+      <a class="ghost-link" href="/admin/updates">Updates</a>
       <a class="ghost-link current" href="/admin/donations">Donations</a>
     </nav>
 
@@ -50,6 +51,54 @@
           <h2>Donation list</h2>
         </div>
       </div>
+
+      <form class="admin-filter-form" method="get" action="/admin/donations">
+        <label class="field">
+          <span>Search</span>
+          <input type="search" name="q" value="{{.SearchQuery}}" placeholder="Donor, email, order, project">
+        </label>
+        <label class="field">
+          <span>Status</span>
+          <select name="status">
+            <option value="" {{if eq .FilterStatus ""}}selected{{end}}>All</option>
+            <option value="pending_payment" {{if eq .FilterStatus "pending_payment"}}selected{{end}}>Pending</option>
+            <option value="paid" {{if eq .FilterStatus "paid"}}selected{{end}}>Paid</option>
+            <option value="cancelled" {{if eq .FilterStatus "cancelled"}}selected{{end}}>Cancelled</option>
+            <option value="expired" {{if eq .FilterStatus "expired"}}selected{{end}}>Expired</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Visibility</span>
+          <select name="visibility">
+            <option value="" {{if eq .FilterVisibility ""}}selected{{end}}>All</option>
+            <option value="public" {{if eq .FilterVisibility "public"}}selected{{end}}>Public</option>
+            <option value="hidden" {{if eq .FilterVisibility "hidden"}}selected{{end}}>Hidden</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Spam</span>
+          <select name="spam">
+            <option value="" {{if eq .FilterSpam ""}}selected{{end}}>All</option>
+            <option value="clean" {{if eq .FilterSpam "clean"}}selected{{end}}>Clean</option>
+            <option value="spam" {{if eq .FilterSpam "spam"}}selected{{end}}>Spam only</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Project</span>
+          <select name="project">
+            <option value="" {{if eq .FilterProjectSlug ""}}selected{{end}}>All</option>
+            {{range .Projects}}
+              <option value="{{.Slug}}" {{if eq $.FilterProjectSlug .Slug}}selected{{end}}>{{.Title}}</option>
+            {{end}}
+          </select>
+        </label>
+        <div class="admin-filter-actions">
+          <button class="primary-button" type="submit">Apply</button>
+          {{if .FilterHasActive}}
+            <a class="secondary-button" href="/admin/donations">Reset</a>
+          {{end}}
+        </div>
+      </form>
 
       <div class="admin-table">
         {{range .Donations}}
@@ -75,23 +124,36 @@
               {{if .Message}}
                 <p>{{.Message}}</p>
               {{end}}
+              <form class="admin-inline-note-form" method="post" action="/admin/donations/{{.ID}}">
+                <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
+                <input type="hidden" name="return_query" value="{{$.FilterQuery}}">
+                <input type="hidden" name="action" value="save_note">
+                <label class="field">
+                  <span>Internal note</span>
+                  <textarea name="moderation_note" rows="3" placeholder="Test payment, donor request, manual verification, refund note">{{.ModerationNote}}</textarea>
+                </label>
+                <button class="secondary-button" type="submit">Save note</button>
+              </form>
             </div>
 
             <div class="admin-row-actions">
               {{if and (eq .Provider "pakasir") .ProviderOrderID}}
                 <form method="post" action="/admin/donations/{{.ID}}">
                   <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
+                  <input type="hidden" name="return_query" value="{{$.FilterQuery}}">
                   <input type="hidden" name="action" value="refresh_status">
                   <button class="ghost-link button-link" type="submit">Refresh</button>
                 </form>
               {{end}}
               <form method="post" action="/admin/donations/{{.ID}}">
                 <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
+                <input type="hidden" name="return_query" value="{{$.FilterQuery}}">
                 <input type="hidden" name="action" value="{{if eq .Visibility "public"}}hide_public{{else}}show_public{{end}}">
                 <button class="ghost-link button-link" type="submit">{{if eq .Visibility "public"}}Hide{{else}}Show{{end}}</button>
               </form>
               <form method="post" action="/admin/donations/{{.ID}}">
                 <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
+                <input type="hidden" name="return_query" value="{{$.FilterQuery}}">
                 <input type="hidden" name="action" value="{{if .IsSpam}}unmark_spam{{else}}mark_spam{{end}}">
                 <button class="ghost-link button-link" type="submit">{{if .IsSpam}}Unspam{{else}}Spam{{end}}</button>
               </form>

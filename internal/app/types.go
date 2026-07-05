@@ -25,6 +25,16 @@ type TimelineEvent struct {
 	Project string
 }
 
+type ProjectUpdate struct {
+	ID           int64
+	ProjectID    int64
+	ProjectSlug  string
+	ProjectTitle string
+	Title        string
+	Body         string
+	PublishedAt  string
+}
+
 type Donation struct {
 	ID                    int64
 	ProjectID             int64
@@ -112,16 +122,36 @@ type AdminProjectsPageData struct {
 	CSRFToken   string
 }
 
+type AdminUpdatesPageData struct {
+	Projects        []Project
+	Updates         []ProjectUpdate
+	Error           string
+	Notice          string
+	UpdateEditingID int64
+	UpdateProjectID int64
+	UpdateTitle     string
+	UpdateBody      string
+	CSRFToken       string
+}
+
 type AdminDonationsPageData struct {
-	Donations    []Donation
-	Error        string
-	Notice       string
-	TotalCount   int
-	PaidCount    int
-	PendingCount int
-	PublicCount  int
-	SpamCount    int
-	CSRFToken    string
+	Donations         []Donation
+	Projects          []Project
+	Error             string
+	Notice            string
+	TotalCount        int
+	PaidCount         int
+	PendingCount      int
+	PublicCount       int
+	SpamCount         int
+	FilterStatus      string
+	FilterVisibility  string
+	FilterSpam        string
+	FilterProjectSlug string
+	FilterQuery       string
+	FilterHasActive   bool
+	SearchQuery       string
+	CSRFToken         string
 }
 
 type PayPageData struct {
