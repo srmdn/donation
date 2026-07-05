@@ -726,10 +726,11 @@ func main() {
 		filterStatus := filters.Get("status")
 		filterVisibility := filters.Get("visibility")
 		filterSpam := filters.Get("spam")
+		filterTest := filters.Get("test")
 		filterProjectSlug := filters.Get("project")
 		searchQuery := filters.Get("q")
 
-		donations, err := db.ListAdminDonations(r.Context(), 100, filterStatus, filterVisibility, filterSpam, filterProjectSlug, searchQuery)
+		donations, err := db.ListAdminDonations(r.Context(), 100, filterStatus, filterVisibility, filterSpam, filterTest, filterProjectSlug, searchQuery)
 		if err != nil {
 			slog.Error("list admin donations", "error", err)
 			http.Error(w, "data load failed", http.StatusInternalServerError)
@@ -750,8 +751,9 @@ func main() {
 			FilterStatus:      filterStatus,
 			FilterVisibility:  filterVisibility,
 			FilterSpam:        filterSpam,
+			FilterTest:        filterTest,
 			FilterProjectSlug: filterProjectSlug,
-			FilterHasActive:   filterStatus != "" || filterVisibility != "" || filterSpam != "" || filterProjectSlug != "" || searchQuery != "",
+			FilterHasActive:   filterStatus != "" || filterVisibility != "" || filterSpam != "" || filterTest != "" || filterProjectSlug != "" || searchQuery != "",
 			SearchQuery:       searchQuery,
 			CSRFToken:         csrfToken(w, r, adminSessionSecret, adminCookieSecure),
 		}
@@ -768,6 +770,9 @@ func main() {
 			}
 			if donation.IsSpam {
 				page.SpamCount++
+			}
+			if donation.IsTest {
+				page.TestCount++
 			}
 		}
 
@@ -1367,7 +1372,7 @@ func adminDonationFilters(r *http.Request) url.Values {
 	if err != nil {
 		return values
 	}
-	for _, key := range []string{"q", "status", "visibility", "spam", "project"} {
+	for _, key := range []string{"q", "status", "visibility", "spam", "test", "project"} {
 		value := strings.TrimSpace(stored.Get(key))
 		if value != "" {
 			values.Set(key, value)
@@ -1378,7 +1383,7 @@ func adminDonationFilters(r *http.Request) url.Values {
 
 func setAdminDonationFilters(w http.ResponseWriter, r *http.Request, secure bool) {
 	values := url.Values{}
-	for _, key := range []string{"q", "status", "visibility", "spam", "project"} {
+	for _, key := range []string{"q", "status", "visibility", "spam", "test", "project"} {
 		value := strings.TrimSpace(r.FormValue(key))
 		if value != "" {
 			values.Set(key, value)

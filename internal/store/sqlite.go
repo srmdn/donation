@@ -80,7 +80,7 @@ func (s *Store) PageDataWithTimelineLimit(ctx context.Context, limit int) (app.P
 	}
 
 	var supporters int
-	if err := s.db.QueryRowContext(ctx, `select count(*) from donations where status = 'paid' and is_spam = 0`).Scan(&supporters); err != nil {
+	if err := s.db.QueryRowContext(ctx, `select count(*) from donations where status = 'paid' and is_spam = 0 and is_test = 0`).Scan(&supporters); err != nil {
 		return app.PageData{}, err
 	}
 	activeProjects, err := s.CountActiveProjects(ctx)
@@ -164,7 +164,7 @@ func (s *Store) listProjectsWithLimit(ctx context.Context, activeOnly bool, limi
 			p.demo_url,
 			coalesce(p.deadline_date, ''),
 			p.is_active,
-			coalesce(sum(case when d.status = 'paid' and d.is_spam = 0 then d.amount else 0 end), 0) as raised,
+			coalesce(sum(case when d.status = 'paid' and d.is_spam = 0 and d.is_test = 0 then d.amount else 0 end), 0) as raised,
 			max(coalesce(max(u.published_at), ''), p.updated_at) as last_updated
 		from projects p
 		left join donations d on d.project_id = p.id
@@ -270,7 +270,7 @@ func (s *Store) ListTimeline(ctx context.Context, projectSlug string, limit int)
 				p.slug as slug
 			from donations d
 			join projects p on p.id = d.project_id
-			where d.status = 'paid' and d.visibility = 'public' and d.is_spam = 0
+			where d.status = 'paid' and d.visibility = 'public' and d.is_spam = 0 and d.is_test = 0
 			union all
 			select
 				'update' as kind,
@@ -370,6 +370,7 @@ func (s *Store) FindDonationByID(ctx context.Context, id int64) (app.Donation, e
 			d.status,
 			d.visibility,
 			d.is_spam,
+			d.is_test,
 			d.moderation_note,
 			d.provider,
 			d.provider_order_id,
@@ -407,6 +408,7 @@ func (s *Store) FindDonationByOrderID(ctx context.Context, orderID string) (app.
 			d.status,
 			d.visibility,
 			d.is_spam,
+			d.is_test,
 			d.moderation_note,
 			d.provider,
 			d.provider_order_id,
@@ -498,7 +500,7 @@ func (s *Store) MarkDonationAdminNotified(ctx context.Context, id int64) error {
 	return err
 }
 
-func (s *Store) ListAdminDonations(ctx context.Context, limit int, status, visibility, spam, projectSlug, search string) ([]app.Donation, error) {
+func (s *Store) ListAdminDonations(ctx context.Context, limit int, status, visibility, spam, testFlag, projectSlug, search string) ([]app.Donation, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -519,6 +521,12 @@ func (s *Store) ListAdminDonations(ctx context.Context, limit int, status, visib
 	}
 	if spam == "clean" {
 		where = append(where, "d.is_spam = 0")
+	}
+	if testFlag == "test" {
+		where = append(where, "d.is_test = 1")
+	}
+	if testFlag == "live" {
+		where = append(where, "d.is_test = 0")
 	}
 	if projectSlug != "" {
 		where = append(where, "p.slug = ?")
@@ -546,6 +554,7 @@ func (s *Store) ListAdminDonations(ctx context.Context, limit int, status, visib
 			d.status,
 			d.visibility,
 			d.is_spam,
+			d.is_test,
 			d.moderation_note,
 			d.provider,
 			d.provider_order_id,
@@ -588,6 +597,7 @@ func scanDonation(scanner interface {
 }) (app.Donation, error) {
 	var donation app.Donation
 	var isSpam int
+	var isTest int
 	if err := scanner.Scan(
 		&donation.ID,
 		&donation.ProjectID,
@@ -601,6 +611,7 @@ func scanDonation(scanner interface {
 		&donation.Status,
 		&donation.Visibility,
 		&isSpam,
+		&isTest,
 		&donation.ModerationNote,
 		&donation.Provider,
 		&donation.ProviderOrderID,
@@ -619,6 +630,7 @@ func scanDonation(scanner interface {
 		return app.Donation{}, err
 	}
 	donation.IsSpam = isSpam == 1
+	donation.IsTest = isTest == 1
 	donation.CreatedAt = displayJakartaTime(donation.CreatedAt)
 	donation.UpdatedAt = displayJakartaTime(donation.UpdatedAt)
 	donation.PaidAt = displayJakartaTime(donation.PaidAt)
@@ -639,6 +651,12 @@ func (s *Store) UpdateDonationModeration(ctx context.Context, id int64, action s
 		args = []any{id}
 	case "show_public":
 		query = `update donations set visibility = 'public', updated_at = datetime('now') where id = ?`
+		args = []any{id}
+	case "mark_test":
+		query = `update donations set is_test = 1, visibility = 'hidden', updated_at = datetime('now') where id = ?`
+		args = []any{id}
+	case "unmark_test":
+		query = `update donations set is_test = 0, updated_at = datetime('now') where id = ?`
 		args = []any{id}
 	case "mark_spam":
 		query = `update donations set is_spam = 1, updated_at = datetime('now') where id = ?`
@@ -962,6 +980,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			status text not null,
 			visibility text not null default 'public',
 			is_spam integer not null default 0,
+			is_test integer not null default 0,
 			moderation_note text not null default '',
 			provider text not null,
 			provider_order_id text not null default '',
@@ -1016,6 +1035,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		`alter table projects add column deadline_date text`,
 		`alter table donations add column visibility text not null default 'public'`,
 		`alter table donations add column is_spam integer not null default 0`,
+		`alter table donations add column is_test integer not null default 0`,
 		`alter table donations add column moderation_note text not null default ''`,
 		`alter table donations add column provider_status text not null default ''`,
 		`alter table donations add column provider_payment_method text not null default ''`,

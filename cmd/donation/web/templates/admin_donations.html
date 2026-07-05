@@ -22,6 +22,7 @@
           <span>{{.PaidCount}} paid</span>
           <span>{{.PendingCount}} pending</span>
           <span>{{.PublicCount}} public</span>
+          <span>{{.TestCount}} test</span>
           <span>{{.SpamCount}} spam</span>
         </div>
         <form method="post" action="/admin/logout">
@@ -52,7 +53,7 @@
         </div>
       </div>
 
-      <form class="admin-filter-form" method="post" action="/admin/donations/filters">
+      <form class="admin-filter-form admin-filter-form-donations" method="post" action="/admin/donations/filters">
         <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
         <label class="field">
           <span>Search</span>
@@ -85,6 +86,14 @@
           </select>
         </label>
         <label class="field">
+          <span>Test</span>
+          <select name="test">
+            <option value="" {{if eq .FilterTest ""}}selected{{end}}>All</option>
+            <option value="live" {{if eq .FilterTest "live"}}selected{{end}}>Live only</option>
+            <option value="test" {{if eq .FilterTest "test"}}selected{{end}}>Test only</option>
+          </select>
+        </label>
+        <label class="field">
           <span>Project</span>
           <select name="project">
             <option value="" {{if eq .FilterProjectSlug ""}}selected{{end}}>All</option>
@@ -114,6 +123,7 @@
                 <span>{{.CreatedAt}}</span>
                 <span>visibility: {{.Visibility}}</span>
                 <span>spam: {{if .IsSpam}}yes{{else}}no{{end}}</span>
+                <span>test: {{if .IsTest}}yes{{else}}no{{end}}</span>
                 <span>provider: {{.Provider}}</span>
               </div>
               <details class="admin-donation-details">
@@ -158,6 +168,11 @@
                 <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
                 <input type="hidden" name="action" value="{{if eq .Visibility "public"}}hide_public{{else}}show_public{{end}}">
                 <button class="ghost-link button-link" type="submit">{{if eq .Visibility "public"}}Hide{{else}}Show{{end}}</button>
+              </form>
+              <form method="post" action="/admin/donations/{{.ID}}">
+                <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
+                <input type="hidden" name="action" value="{{if .IsTest}}unmark_test{{else}}mark_test{{end}}">
+                <button class="ghost-link button-link" type="submit">{{if .IsTest}}Untest{{else}}Test{{end}}</button>
               </form>
               <form method="post" action="/admin/donations/{{.ID}}">
                 <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
