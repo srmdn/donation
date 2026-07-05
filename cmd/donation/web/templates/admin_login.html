@@ -13,19 +13,23 @@
     <section class="admin-auth-panel">
       <p class="eyebrow">Admin</p>
       <h1>Sign in</h1>
-      <p class="bio">Use the local admin password from your environment to manage projects.</p>
+      <p class="bio">Request a one-time sign-in link for the configured admin email.</p>
 
       {{if .Error}}
         <p class="form-alert error">{{.Error}}</p>
       {{end}}
+      {{if .Notice}}
+        <p class="form-alert notice">{{.Notice}}</p>
+      {{end}}
 
       <form class="admin-auth-form" method="post" action="/admin/login">
+        <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
         <label class="field">
-          <span>Password</span>
-          <input name="password" type="password" autocomplete="current-password" required>
+          <span>Email</span>
+          <input name="email" type="email" autocomplete="email" value="{{.Email}}" required>
         </label>
 
-        <button class="primary-button" type="submit">Sign in</button>
+        <button class="primary-button" type="submit">Email sign-in link</button>
       </form>
     </section>
   </main>

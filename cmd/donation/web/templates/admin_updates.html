@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin updates</title>
+  <link rel="stylesheet" href="/static/base.css">
+  <link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+  {{template "site_nav" .}}
+  <main class="admin-shell">
+    <header class="admin-header">
+      <div>
+        <p class="eyebrow">Admin</p>
+        <h1>Updates</h1>
+      </div>
+
+      <div class="admin-actions">
+        <div class="admin-stats">
+          <span>{{len .Updates}} total</span>
+          <span>{{len .Projects}} projects</span>
+        </div>
+        <form method="post" action="/admin/logout">
+          <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+          <button class="secondary-button" type="submit">Sign out</button>
+        </form>
+      </div>
+    </header>
+
+    <nav class="admin-subnav" aria-label="Admin">
+      <a class="ghost-link" href="/admin/projects">Projects</a>
+      <a class="ghost-link current" href="/admin/updates">Updates</a>
+      <a class="ghost-link" href="/admin/donations">Donations</a>
+    </nav>
+
+    {{if .Error}}
+      <p class="form-alert error">{{.Error}}</p>
+    {{end}}
+    {{if .Notice}}
+      <p class="form-alert notice">{{.Notice}}</p>
+    {{end}}
+
+    <section class="admin-grid admin-grid-projects">
+      <section class="admin-panel">
+        <div class="section-heading compact admin-panel-head">
+          <div>
+            <p class="eyebrow">Publish</p>
+            <h2>{{if gt .UpdateEditingID 0}}Edit project update{{else}}Project update{{end}}</h2>
+          </div>
+          {{if gt .UpdateEditingID 0}}
+            <a class="ghost-link" href="/admin/updates">New update</a>
+          {{end}}
+        </div>
+
+        <form class="admin-form" method="post" action="{{if gt .UpdateEditingID 0}}/admin/project-updates/{{.UpdateEditingID}}{{else}}/admin/project-updates{{end}}">
+          <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+          <label class="field">
+            <span>Project</span>
+            <select name="project_id" required>
+              <option value="">Select project</option>
+              {{range .Projects}}
+                <option value="{{.ID}}" {{if eq $.UpdateProjectID .ID}}selected{{end}}>{{.Title}}</option>
+              {{end}}
+            </select>
+          </label>
+
+          <label class="field">
+            <span>Update title</span>
+            <input name="title" value="{{.UpdateTitle}}" required>
+          </label>
+
+          <label class="field">
+            <span>Update body</span>
+            <textarea name="body" rows="5" required>{{.UpdateBody}}</textarea>
+          </label>
+
+          {{if gt .UpdateEditingID 0}}
+            <button class="primary-button" type="submit">Save update</button>
+          {{else}}
+            <button class="primary-button" type="submit">Publish update</button>
+          {{end}}
+        </form>
+      </section>
+
+      <section class="admin-panel">
+        <div class="section-heading compact admin-panel-head">
+          <div>
+            <p class="eyebrow">Recent</p>
+            <h2>Published updates</h2>
+          </div>
+        </div>
+
+        <div class="admin-table">
+          {{range .Updates}}
+            <article class="admin-row">
+              <div>
+                <div class="admin-row-top">
+                  <strong>{{.Title}}</strong>
+                </div>
+                <p>{{.Body}}</p>
+                <div class="admin-row-meta">
+                  <span>{{.PublishedAt}}</span>
+                  <span><a href="/projects/{{.ProjectSlug}}">{{.ProjectTitle}}</a></span>
+                </div>
+              </div>
+              <div class="admin-row-actions">
+                <a class="ghost-link button-link" href="/admin/updates?update_edit={{.ID}}">Edit</a>
+                <form method="post" action="/admin/project-updates/{{.ID}}">
+                  <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
+                  <input type="hidden" name="action" value="delete">
+                  <button class="ghost-link button-link" type="submit">Delete</button>
+                </form>
+              </div>
+            </article>
+          {{else}}
+            <p>No updates yet.</p>
+          {{end}}
+        </div>
+      </section>
+    </section>
+  </main>
+  {{template "site_footer" .}}
+</body>
+</html>

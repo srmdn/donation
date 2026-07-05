@@ -38,7 +38,12 @@
             <strong>{{rupiah .Raised}}</strong>
             <span>of {{rupiah .Goal}}</span>
           </div>
-          <a class="secondary-link" href="/projects/{{.Slug}}">Support {{.Title}}</a>
+          <div class="project-card-actions">
+            {{if .DeadlineText}}
+              <span class="deadline-chip {{if .DeadlineEnded}}ended{{end}}">{{.DeadlineText}}</span>
+            {{end}}
+            <a class="secondary-link" href="/projects/{{.Slug}}">{{if .DeadlineEnded}}Lihat detail{{else}}Support {{.Title}}{{end}}</a>
+          </div>
         </article>
       {{end}}
     </section>

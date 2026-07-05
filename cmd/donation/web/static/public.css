@@ -148,6 +148,36 @@
   font-size: 14px;
 }
 
+.project-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+
+.deadline-chip,
+.deadline-note {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.deadline-chip {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: #efefe9;
+}
+
+.deadline-chip.ended,
+.deadline-note.ended {
+  color: #8a6c2f;
+}
+
 .live-pill {
   position: relative;
   padding: 8px 12px 8px 24px;
@@ -284,6 +314,27 @@
   margin-top: 20px;
 }
 
+.project-meta-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 24px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  background: #f4f4ef;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+
+.project-meta-note span {
+  font-size: 13px;
+}
+
+.project-meta-note strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
 .funding-panel,
 .donation-form,
 .thanks-panel,
@@ -308,6 +359,10 @@
   line-height: 1.5;
 }
 
+.deadline-note {
+  margin-top: 12px;
+}
+
 .panel-label,
 .amount-grid legend {
   display: block;
@@ -322,6 +377,12 @@
   gap: 44px;
   align-items: start;
   padding-top: 44px;
+}
+
+.donation-closed p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
 }
 
 .form-heading {
@@ -639,6 +700,11 @@
     align-items: start;
     flex-direction: column;
     gap: 6px;
+  }
+
+  .project-card-actions {
+    align-items: start;
+    flex-direction: column;
   }
 
   .amount-grid {

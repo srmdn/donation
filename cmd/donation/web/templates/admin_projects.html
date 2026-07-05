@@ -22,6 +22,7 @@
           <span>{{.ActiveCount}} active</span>
         </div>
         <form method="post" action="/admin/logout">
+          <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
           <button class="secondary-button" type="submit">Sign out</button>
         </form>
       </div>
@@ -29,6 +30,7 @@
 
     <nav class="admin-subnav" aria-label="Admin">
       <a class="ghost-link current" href="/admin/projects">Projects</a>
+      <a class="ghost-link" href="/admin/updates">Updates</a>
       <a class="ghost-link" href="/admin/donations">Donations</a>
     </nav>
 
@@ -52,6 +54,7 @@
         </div>
 
         <form class="admin-form" method="post" action="{{if .HasEditing}}/admin/projects/{{.Editing.ID}}{{else}}/admin/projects{{end}}">
+          <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
           <label class="field">
             <span>Title</span>
             <input name="title" value="{{.Editing.Title}}" required>
@@ -96,6 +99,12 @@
             </label>
           </div>
 
+          <label class="field">
+            <span>Deadline pendanaan</span>
+            <input name="deadline_date" type="date" value="{{.Editing.DeadlineDate}}">
+            <small>Opsional. Jika diisi, donasi berhenti otomatis setelah hari tersebut selesai di zona waktu Asia/Jakarta.</small>
+          </label>
+
           <div class="admin-form-grid">
             <label class="field">
               <span>Accent</span>
@@ -137,6 +146,9 @@
                   <span>{{.Slug}}</span>
                   <span>{{rupiah .Raised}} / {{rupiah .Goal}}</span>
                   <span>{{.Status}}</span>
+                  {{if .DeadlineText}}
+                    <span>{{.DeadlineText}}</span>
+                  {{end}}
                 </div>
               </div>
               <a class="ghost-link" href="/admin/projects?edit={{.ID}}">Edit</a>

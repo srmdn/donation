@@ -12,7 +12,7 @@ Visitors can choose which project to support, see funding progress, and follow a
 - Project detail page with donation form
 - SQLite-backed seed data
 - Mock payment flow for local development
-- Planned Pakasir QRIS integration for production payments
+- Pakasir QRIS integration for production payments
 
 ## Stack
 
@@ -30,36 +30,53 @@ Run locally:
 go run ./cmd/donation
 ```
 
-Default address:
-
-```txt
-127.0.0.1:8094
-```
-
 Default SQLite path:
 
 ```txt
 data/donation.db
 ```
 
-Override:
+Override with your own local bind address and database path:
 
 ```sh
-ADDR=127.0.0.1:3000 DB_PATH=data/dev.db go run ./cmd/donation
+ADDR=127.0.0.1:<your-port> DB_PATH=data/dev.db go run ./cmd/donation
 ```
 
-For Pakasir return links:
+For Pakasir return links, set your own local base URL:
 
 ```txt
-PUBLIC_BASE_URL=http://127.0.0.1:8094
+PUBLIC_BASE_URL=http://127.0.0.1:<your-port>
 ```
 
-Admin defaults:
+Environment:
 
 ```txt
-ADMIN_PASSWORD=admin
+APP_ENV=development
+```
+
+Admin auth:
+
+```txt
+ADMIN_EMAIL=you@example.com
 ADMIN_SESSION_SECRET=change-me
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USERNAME=
+SMTP_PASSWORD=
+MAIL_FROM=
 ```
+
+Generate a session secret:
+
+```sh
+python3 -c "import secrets; print(secrets.token_hex(32))"
+```
+
+Production startup guards:
+
+- `APP_ENV=production` refuses to start with `ADMIN_SESSION_SECRET` empty or `change-me`
+- `APP_ENV=production` refuses to start with `PAYMENT_MODE=mock`
+- `APP_ENV=production` refuses to start without SMTP configuration
 
 Pakasir placeholders:
 
@@ -89,6 +106,15 @@ Production payment flow is planned around Pakasir:
 - receive payment webhook at `/api/webhooks/pakasir`
 - verify transaction status with Pakasir transaction detail API
 - mark donation as paid only after verification
+
+## Admin Login
+
+Admin access now uses an email magic link.
+
+- `ADMIN_EMAIL` controls who can request the link
+- the sign-in token is one-time and expires after 15 minutes
+- if SMTP is not configured and `APP_ENV=development` with local `PUBLIC_BASE_URL`, the sign-in link is written to the app log
+- outside that development case, admin login fails closed unless SMTP is configured
 
 ## Donation Amounts
 

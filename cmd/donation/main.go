@@ -1,9 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
+	"crypto/rand"
 	"crypto/subtle"
 	"embed"
 	"encoding/hex"
@@ -13,14 +13,18 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/srmdn/donation/internal/app"
+	"github.com/srmdn/donation/internal/csrf"
+	"github.com/srmdn/donation/internal/mailer"
 	"github.com/srmdn/donation/internal/payment"
 	"github.com/srmdn/donation/internal/store"
 )
@@ -30,14 +34,54 @@ var assets embed.FS
 
 const minDonationAmount = 25000
 
+type loginRateLimiter struct {
+	mu      sync.Mutex
+	window  time.Duration
+	limit   int
+	entries map[string]loginRateEntry
+}
+
+type loginRateEntry struct {
+	count   int
+	expires time.Time
+}
+
 func main() {
+	loadDotenv(".env")
+
 	addr := env("ADDR", "127.0.0.1:8094")
 	dbPath := env("DB_PATH", "data/donation.db")
 	publicBaseURL := env("PUBLIC_BASE_URL", "")
-	adminPassword := env("ADMIN_PASSWORD", "admin")
-	adminSessionSecret := env("ADMIN_SESSION_SECRET", adminPassword)
+	appEnv := env("APP_ENV", "development")
+	adminEmail := strings.TrimSpace(strings.ToLower(env("ADMIN_EMAIL", "")))
+	adminSessionSecret := env("ADMIN_SESSION_SECRET", "change-me")
 	adminCookieSecure := strings.HasPrefix(strings.ToLower(publicBaseURL), "https://")
 	paymentMode := env("PAYMENT_MODE", "mock")
+	allowLoggedMagicLink := isDevelopmentEnv(appEnv) && isLocalPublicBaseURL(publicBaseURL)
+	adminMailer := mailer.New(
+		env("SMTP_HOST", ""),
+		envInt("SMTP_PORT", 587),
+		env("SMTP_USERNAME", ""),
+		env("SMTP_PASSWORD", ""),
+		env("MAIL_FROM", ""),
+	)
+	if isProductionEnv(appEnv) {
+		if invalidAdminSessionSecret(adminSessionSecret) {
+			slog.Error("invalid admin session secret for production")
+			os.Exit(1)
+		}
+		if paymentMode == "mock" {
+			slog.Error("mock payment mode is not allowed in production")
+			os.Exit(1)
+		}
+		if !adminMailer.Configured() {
+			slog.Error("smtp must be configured in production")
+			os.Exit(1)
+		}
+	}
+	adminLoginLimiter := newLoginRateLimiter(5, 15*time.Minute)
+	adminVerifyLimiter := newLoginRateLimiter(10, 15*time.Minute)
+	webhookLimiter := newLoginRateLimiter(60, time.Minute)
 	staticFS := mustSubFS(assets, "web/static")
 	db, err := store.Open(dbPath)
 	if err != nil {
@@ -135,6 +179,7 @@ func main() {
 		data.Timeline = timeline
 		data.TimelineHasMore = hasMore
 		data.TimelineNextLimit = projectTimelineLimit + 5
+		data.CSRFToken = csrfToken(w, r, adminSessionSecret, adminCookieSecure)
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, "project.html", app.ProjectPageData{
@@ -150,10 +195,33 @@ func main() {
 			http.Error(w, "invalid form", http.StatusBadRequest)
 			return
 		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
+			return
+		}
 
 		slug := strings.TrimSpace(r.FormValue("project_slug"))
 		if slug == "" {
 			http.Error(w, "missing project", http.StatusBadRequest)
+			return
+		}
+		email := strings.TrimSpace(strings.ToLower(r.FormValue("email")))
+		if email == "" {
+			http.Error(w, "email is required", http.StatusBadRequest)
+			return
+		}
+		project, err := db.FindProject(r.Context(), slug)
+		if errors.Is(err, store.ErrNotFound()) {
+			http.Error(w, "project not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			slog.Error("load donation project", "error", err, "slug", slug)
+			http.Error(w, "donation failed", http.StatusInternalServerError)
+			return
+		}
+		if project.DeadlineEnded {
+			http.Error(w, "periode dukungan untuk proyek ini sudah berakhir", http.StatusBadRequest)
 			return
 		}
 		amount, err := donationAmountFromRequest(r)
@@ -166,7 +234,7 @@ func main() {
 			r.Context(),
 			slug,
 			strings.TrimSpace(r.FormValue("name")),
-			strings.TrimSpace(r.FormValue("email")),
+			email,
 			strings.TrimSpace(r.FormValue("message")),
 			amount,
 		)
@@ -176,14 +244,9 @@ func main() {
 			return
 		}
 
-		// Mock mode: mark paid immediately so progress/timeline behavior is visible before Pakasir.
+		// Mock mode keeps the donation pending until explicitly confirmed from the payment page.
 		if paymentMode == "mock" {
-			if err := db.MarkDonationPaid(r.Context(), id); err != nil {
-				slog.Error("mark mock donation paid", "error", err)
-				http.Error(w, "donation failed", http.StatusInternalServerError)
-				return
-			}
-			http.Redirect(w, r, "/thanks?id="+strconv.FormatInt(id, 10), http.StatusSeeOther)
+			http.Redirect(w, r, "/pay/"+strconv.FormatInt(id, 10), http.StatusSeeOther)
 			return
 		}
 
@@ -253,12 +316,56 @@ func main() {
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, "pay.html", app.PayPageData{
-			Builder:  defaultBuilder(),
-			Donation: donation,
+			Builder:   defaultBuilder(),
+			Donation:  donation,
+			CSRFToken: csrfToken(w, r, adminSessionSecret, adminCookieSecure),
 		}); err != nil {
 			slog.Error("render pay page", "error", err)
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}
+	})
+	mux.HandleFunc("POST /pay/{id}/mock-confirm", func(w http.ResponseWriter, r *http.Request) {
+		if paymentMode != "mock" {
+			http.NotFound(w, r)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
+			return
+		}
+
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid donation id", http.StatusBadRequest)
+			return
+		}
+		donation, err := db.FindDonationByID(r.Context(), id)
+		if errors.Is(err, store.ErrNotFound()) {
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			slog.Error("load mock confirm donation", "error", err, "id", id)
+			http.Error(w, "data load failed", http.StatusInternalServerError)
+			return
+		}
+		if donation.Status != "paid" {
+			if err := db.MarkDonationPaid(r.Context(), id); err != nil {
+				slog.Error("mark mock donation paid", "error", err, "id", id)
+				http.Error(w, "payment confirm failed", http.StatusInternalServerError)
+				return
+			}
+			if updated, err := db.FindDonationByID(r.Context(), id); err == nil {
+				if err := notifyAdminDonationPaid(r.Context(), db, adminMailer, adminEmail, publicBaseURL, updated); err != nil {
+					slog.Error("notify admin donation paid", "error", err, "id", id)
+				}
+			}
+		}
+		http.Redirect(w, r, "/thanks?id="+strconv.FormatInt(id, 10), http.StatusSeeOther)
 	})
 	mux.HandleFunc("GET /thanks", func(w http.ResponseWriter, r *http.Request) {
 		page := app.ThanksPageData{
@@ -276,6 +383,9 @@ func main() {
 							slog.Warn("refresh donation status", "error", err, "id", donation.ID)
 						} else if updated, err := db.FindDonationByID(r.Context(), donationID); err == nil {
 							donation = updated
+							if err := notifyAdminDonationPaid(r.Context(), db, adminMailer, adminEmail, publicBaseURL, donation); err != nil {
+								slog.Error("notify admin donation paid", "error", err, "id", donation.ID)
+							}
 						}
 					}
 					page.Donation = donation
@@ -292,6 +402,10 @@ func main() {
 	mux.HandleFunc("POST /api/webhooks/pakasir", func(w http.ResponseWriter, r *http.Request) {
 		if paymentMode != "pakasir" {
 			http.Error(w, "payment mode disabled", http.StatusNotFound)
+			return
+		}
+		if !webhookLimiter.Allow(clientIP(r), time.Now()) {
+			http.Error(w, "too many requests", http.StatusTooManyRequests)
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
@@ -346,26 +460,35 @@ func main() {
 			http.Error(w, "verification failed", http.StatusBadGateway)
 			return
 		}
+		if updated, err := db.FindDonationByID(r.Context(), donation.ID); err == nil {
+			if err := notifyAdminDonationPaid(r.Context(), db, adminMailer, adminEmail, publicBaseURL, updated); err != nil {
+				slog.Error("notify admin donation paid", "error", err, "id", updated.ID)
+			}
+		}
 
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
 	})
 	mux.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) {
-		if !isAdmin(r, adminSessionSecret) {
+		if !isAdmin(r.Context(), r, db) {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 			return
 		}
 		http.Redirect(w, r, "/admin/projects", http.StatusSeeOther)
 	})
 	mux.HandleFunc("GET /admin/login", func(w http.ResponseWriter, r *http.Request) {
-		if isAdmin(r, adminSessionSecret) {
+		if isAdmin(r.Context(), r, db) {
 			http.Redirect(w, r, "/admin/projects", http.StatusSeeOther)
 			return
 		}
 
+		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, "admin_login.html", app.AdminLoginPageData{
-			Error: strings.TrimSpace(r.URL.Query().Get("error")),
+			Error:     strings.TrimSpace(r.URL.Query().Get("error")),
+			Notice:    strings.TrimSpace(r.URL.Query().Get("notice")),
+			Email:     strings.TrimSpace(r.URL.Query().Get("email")),
+			CSRFToken: csrfToken(w, r, adminSessionSecret, adminCookieSecure),
 		}); err != nil {
 			slog.Error("render admin login", "error", err)
 			http.Error(w, "render failed", http.StatusInternalServerError)
@@ -376,22 +499,139 @@ func main() {
 			http.Error(w, "invalid form", http.StatusBadRequest)
 			return
 		}
-
-		password := strings.TrimSpace(r.FormValue("password"))
-		if subtle.ConstantTimeCompare([]byte(password), []byte(adminPassword)) != 1 {
-			http.Redirect(w, r, "/admin/login?error="+url.QueryEscape("Wrong password"), http.StatusSeeOther)
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
 			return
 		}
 
-		setAdminCookie(w, adminSessionSecret, adminCookieSecure)
+		email := strings.TrimSpace(strings.ToLower(r.FormValue("email")))
+		if email == "" {
+			http.Redirect(w, r, "/admin/login?error="+url.QueryEscape("Email is required"), http.StatusSeeOther)
+			return
+		}
+		if adminEmail == "" {
+			http.Redirect(w, r, "/admin/login?error="+url.QueryEscape("Admin email is not configured"), http.StatusSeeOther)
+			return
+		}
+		if !adminLoginLimiter.Allow(adminRateLimitKey(r, email), time.Now()) {
+			http.Redirect(w, r, "/admin/login?error="+url.QueryEscape("Too many sign-in attempts. Wait a few minutes and try again.")+"&email="+url.QueryEscape(email), http.StatusSeeOther)
+			return
+		}
+
+		notice := "If that email can access admin, a sign-in link is ready."
+		if subtle.ConstantTimeCompare([]byte(email), []byte(adminEmail)) == 1 {
+			if !adminMailer.Configured() && !allowLoggedMagicLink {
+				slog.Error("admin mail delivery is not configured for this environment")
+				http.Redirect(w, r, "/admin/login?error="+url.QueryEscape("Admin mail delivery is not configured"), http.StatusSeeOther)
+				return
+			}
+			token, err := generateLoginToken()
+			if err != nil {
+				slog.Error("generate admin login token", "error", err)
+				http.Error(w, "login failed", http.StatusInternalServerError)
+				return
+			}
+			expiresAt := time.Now().Add(15 * time.Minute)
+			if err := db.CreateAdminLoginToken(r.Context(), email, token, expiresAt); err != nil {
+				slog.Error("store admin login token", "error", err)
+				http.Error(w, "login failed", http.StatusInternalServerError)
+				return
+			}
+			if err := adminMailer.SendMagicLink(email, adminMagicLoginURL(publicBaseURL, token)); err != nil {
+				slog.Error("send admin magic link", "error", err)
+				http.Error(w, "login failed", http.StatusInternalServerError)
+				return
+			}
+		}
+
+		http.Redirect(w, r, "/admin/login?notice="+url.QueryEscape(notice)+"&email="+url.QueryEscape(email), http.StatusSeeOther)
+	})
+	mux.HandleFunc("GET /admin/login/verify", func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimSpace(r.URL.Query().Get("token"))
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := tmpl.ExecuteTemplate(w, "admin_login_verify.html", app.AdminLoginVerifyPageData{
+			Error:     strings.TrimSpace(r.URL.Query().Get("error")),
+			Token:     token,
+			CSRFToken: csrfToken(w, r, adminSessionSecret, adminCookieSecure),
+		}); err != nil {
+			slog.Error("render admin login verify", "error", err)
+			http.Error(w, "render failed", http.StatusInternalServerError)
+		}
+	})
+	mux.HandleFunc("POST /admin/login/verify", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
+			return
+		}
+
+		token := strings.TrimSpace(r.FormValue("token"))
+		if token == "" {
+			http.Redirect(w, r, "/admin/login?error="+url.QueryEscape("That sign-in link is invalid or expired"), http.StatusSeeOther)
+			return
+		}
+		if !adminVerifyLimiter.Allow(adminRateLimitKey(r, token), time.Now()) {
+			http.Redirect(w, r, "/admin/login?error="+url.QueryEscape("Too many sign-in attempts. Wait a few minutes and try again."), http.StatusSeeOther)
+			return
+		}
+
+		email, err := db.ConsumeAdminLoginToken(r.Context(), token, time.Now())
+		if errors.Is(err, store.ErrInvalidAdminLoginTokenError()) {
+			http.Redirect(w, r, "/admin/login?error="+url.QueryEscape("That sign-in link is invalid or expired"), http.StatusSeeOther)
+			return
+		}
+		if err != nil {
+			slog.Error("consume admin login token", "error", err)
+			http.Error(w, "login failed", http.StatusInternalServerError)
+			return
+		}
+		if adminEmail == "" || subtle.ConstantTimeCompare([]byte(strings.ToLower(email)), []byte(adminEmail)) != 1 {
+			http.Redirect(w, r, "/admin/login?error="+url.QueryEscape("That sign-in link is invalid or expired"), http.StatusSeeOther)
+			return
+		}
+
+		sessionToken, err := generateLoginToken()
+		if err != nil {
+			slog.Error("generate admin session token", "error", err)
+			http.Error(w, "login failed", http.StatusInternalServerError)
+			return
+		}
+		sessionExpiresAt := time.Now().Add(30 * 24 * time.Hour)
+		if err := db.CreateAdminSession(r.Context(), sessionToken, sessionExpiresAt); err != nil {
+			slog.Error("store admin session", "error", err)
+			http.Error(w, "login failed", http.StatusInternalServerError)
+			return
+		}
+
+		setAdminCookie(w, sessionToken, adminCookieSecure, sessionExpiresAt)
 		http.Redirect(w, r, "/admin/projects?notice="+url.QueryEscape("Signed in"), http.StatusSeeOther)
 	})
 	mux.HandleFunc("POST /admin/logout", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
+			return
+		}
+		if token := adminSessionToken(r); token != "" {
+			if err := db.DeleteAdminSession(r.Context(), token); err != nil {
+				slog.Error("delete admin session", "error", err)
+				http.Error(w, "logout failed", http.StatusInternalServerError)
+				return
+			}
+		}
 		clearAdminCookie(w, adminCookieSecure)
 		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 	})
 	mux.HandleFunc("GET /admin/projects", func(w http.ResponseWriter, r *http.Request) {
-		if !isAdmin(r, adminSessionSecret) {
+		if !isAdmin(r.Context(), r, db) {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 			return
 		}
@@ -402,11 +642,11 @@ func main() {
 			http.Error(w, "data load failed", http.StatusInternalServerError)
 			return
 		}
-
 		page := app.AdminProjectsPageData{
-			Projects: projects,
-			Error:    strings.TrimSpace(r.URL.Query().Get("error")),
-			Notice:   strings.TrimSpace(r.URL.Query().Get("notice")),
+			Projects:  projects,
+			Error:     strings.TrimSpace(r.URL.Query().Get("error")),
+			Notice:    strings.TrimSpace(r.URL.Query().Get("notice")),
+			CSRFToken: csrfToken(w, r, adminSessionSecret, adminCookieSecure),
 		}
 		for _, project := range projects {
 			if project.IsActive {
@@ -425,30 +665,95 @@ func main() {
 				}
 			}
 		}
-
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, "admin_projects.html", page); err != nil {
 			slog.Error("render admin projects", "error", err)
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}
 	})
-	mux.HandleFunc("GET /admin/donations", func(w http.ResponseWriter, r *http.Request) {
-		if !isAdmin(r, adminSessionSecret) {
+	mux.HandleFunc("GET /admin/updates", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(r.Context(), r, db) {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 			return
 		}
 
-		donations, err := db.ListAdminDonations(r.Context(), 100)
+		projects, err := db.ListAllProjects(r.Context())
+		if err != nil {
+			slog.Error("list projects for admin updates", "error", err)
+			http.Error(w, "data load failed", http.StatusInternalServerError)
+			return
+		}
+		updates, err := db.ListAdminProjectUpdates(r.Context(), 30)
+		if err != nil {
+			slog.Error("list admin project updates", "error", err)
+			http.Error(w, "data load failed", http.StatusInternalServerError)
+			return
+		}
+
+		page := app.AdminUpdatesPageData{
+			Projects:    projects,
+			Updates:     updates,
+			Error:       strings.TrimSpace(r.URL.Query().Get("error")),
+			Notice:      strings.TrimSpace(r.URL.Query().Get("notice")),
+			UpdateTitle: strings.TrimSpace(r.URL.Query().Get("update_title")),
+			UpdateBody:  strings.TrimSpace(r.URL.Query().Get("update_body")),
+			CSRFToken:   csrfToken(w, r, adminSessionSecret, adminCookieSecure),
+		}
+		page.UpdateProjectID, _ = strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("update_project_id")), 10, 64)
+		page.UpdateEditingID, _ = strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("update_edit")), 10, 64)
+		if page.UpdateEditingID > 0 && page.UpdateTitle == "" && page.UpdateBody == "" && page.UpdateProjectID == 0 {
+			update, err := db.FindProjectUpdateByID(r.Context(), page.UpdateEditingID)
+			if err == nil {
+				page.UpdateProjectID = update.ProjectID
+				page.UpdateTitle = update.Title
+				page.UpdateBody = update.Body
+			}
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := tmpl.ExecuteTemplate(w, "admin_updates.html", page); err != nil {
+			slog.Error("render admin updates", "error", err)
+			http.Error(w, "render failed", http.StatusInternalServerError)
+		}
+	})
+	mux.HandleFunc("GET /admin/donations", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(r.Context(), r, db) {
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+
+		filterStatus := strings.TrimSpace(r.URL.Query().Get("status"))
+		filterVisibility := strings.TrimSpace(r.URL.Query().Get("visibility"))
+		filterSpam := strings.TrimSpace(r.URL.Query().Get("spam"))
+		filterProjectSlug := strings.TrimSpace(r.URL.Query().Get("project"))
+		searchQuery := strings.TrimSpace(r.URL.Query().Get("q"))
+
+		donations, err := db.ListAdminDonations(r.Context(), 100, filterStatus, filterVisibility, filterSpam, filterProjectSlug, searchQuery)
 		if err != nil {
 			slog.Error("list admin donations", "error", err)
 			http.Error(w, "data load failed", http.StatusInternalServerError)
 			return
 		}
+		projects, err := db.ListAllProjects(r.Context())
+		if err != nil {
+			slog.Error("list projects for admin donations", "error", err)
+			http.Error(w, "data load failed", http.StatusInternalServerError)
+			return
+		}
 
 		page := app.AdminDonationsPageData{
-			Donations: donations,
-			Error:     strings.TrimSpace(r.URL.Query().Get("error")),
-			Notice:    strings.TrimSpace(r.URL.Query().Get("notice")),
+			Donations:         donations,
+			Projects:          projects,
+			Error:             strings.TrimSpace(r.URL.Query().Get("error")),
+			Notice:            strings.TrimSpace(r.URL.Query().Get("notice")),
+			FilterStatus:      filterStatus,
+			FilterVisibility:  filterVisibility,
+			FilterSpam:        filterSpam,
+			FilterProjectSlug: filterProjectSlug,
+			FilterQuery:       r.URL.RawQuery,
+			FilterHasActive:   filterStatus != "" || filterVisibility != "" || filterSpam != "" || filterProjectSlug != "" || searchQuery != "",
+			SearchQuery:       searchQuery,
+			CSRFToken:         csrfToken(w, r, adminSessionSecret, adminCookieSecure),
 		}
 		for _, donation := range donations {
 			page.TotalCount++
@@ -473,8 +778,16 @@ func main() {
 		}
 	})
 	mux.HandleFunc("POST /admin/projects", func(w http.ResponseWriter, r *http.Request) {
-		if !isAdmin(r, adminSessionSecret) {
+		if !isAdmin(r.Context(), r, db) {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
 			return
 		}
 
@@ -491,8 +804,16 @@ func main() {
 		http.Redirect(w, r, "/admin/projects?notice="+url.QueryEscape("Project created"), http.StatusSeeOther)
 	})
 	mux.HandleFunc("POST /admin/projects/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if !isAdmin(r, adminSessionSecret) {
+		if !isAdmin(r.Context(), r, db) {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
 			return
 		}
 
@@ -515,8 +836,89 @@ func main() {
 		}
 		http.Redirect(w, r, "/admin/projects?notice="+url.QueryEscape("Project updated"), http.StatusSeeOther)
 	})
+	mux.HandleFunc("POST /admin/project-updates", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(r.Context(), r, db) {
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
+			return
+		}
+
+		projectID, err := strconv.ParseInt(strings.TrimSpace(r.FormValue("project_id")), 10, 64)
+		if err != nil || projectID <= 0 {
+			http.Redirect(w, r, "/admin/updates?error="+url.QueryEscape("Project is required")+"&update_title="+url.QueryEscape(strings.TrimSpace(r.FormValue("title")))+"&update_body="+url.QueryEscape(strings.TrimSpace(r.FormValue("body"))), http.StatusSeeOther)
+			return
+		}
+		title := strings.TrimSpace(r.FormValue("title"))
+		body := strings.TrimSpace(r.FormValue("body"))
+		if title == "" || body == "" {
+			http.Redirect(w, r, "/admin/updates?error="+url.QueryEscape("Update title and body are required")+"&update_project_id="+url.QueryEscape(strconv.FormatInt(projectID, 10))+"&update_title="+url.QueryEscape(title)+"&update_body="+url.QueryEscape(body), http.StatusSeeOther)
+			return
+		}
+		if err := db.CreateProjectUpdate(r.Context(), projectID, title, body); err != nil {
+			slog.Error("create project update", "error", err, "project_id", projectID)
+			http.Redirect(w, r, "/admin/updates?error="+url.QueryEscape("Update publish failed")+"&update_project_id="+url.QueryEscape(strconv.FormatInt(projectID, 10))+"&update_title="+url.QueryEscape(title)+"&update_body="+url.QueryEscape(body), http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/admin/updates?notice="+url.QueryEscape("Project update published"), http.StatusSeeOther)
+	})
+	mux.HandleFunc("POST /admin/project-updates/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(r.Context(), r, db) {
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
+			return
+		}
+
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id <= 0 {
+			http.Error(w, "invalid update id", http.StatusBadRequest)
+			return
+		}
+
+		action := strings.TrimSpace(r.FormValue("action"))
+		if action == "delete" {
+			if err := db.DeleteProjectUpdate(r.Context(), id); err != nil {
+				slog.Error("delete project update", "error", err, "id", id)
+				http.Redirect(w, r, "/admin/updates?error="+url.QueryEscape("Update delete failed"), http.StatusSeeOther)
+				return
+			}
+			http.Redirect(w, r, "/admin/updates?notice="+url.QueryEscape("Project update deleted"), http.StatusSeeOther)
+			return
+		}
+
+		projectID, err := strconv.ParseInt(strings.TrimSpace(r.FormValue("project_id")), 10, 64)
+		if err != nil || projectID <= 0 {
+			http.Redirect(w, r, "/admin/updates?error="+url.QueryEscape("Project is required")+"&update_edit="+url.QueryEscape(strconv.FormatInt(id, 10))+"&update_title="+url.QueryEscape(strings.TrimSpace(r.FormValue("title")))+"&update_body="+url.QueryEscape(strings.TrimSpace(r.FormValue("body"))), http.StatusSeeOther)
+			return
+		}
+		title := strings.TrimSpace(r.FormValue("title"))
+		body := strings.TrimSpace(r.FormValue("body"))
+		if title == "" || body == "" {
+			http.Redirect(w, r, "/admin/updates?error="+url.QueryEscape("Update title and body are required")+"&update_edit="+url.QueryEscape(strconv.FormatInt(id, 10))+"&update_project_id="+url.QueryEscape(strconv.FormatInt(projectID, 10))+"&update_title="+url.QueryEscape(title)+"&update_body="+url.QueryEscape(body), http.StatusSeeOther)
+			return
+		}
+		if err := db.UpdateProjectUpdate(r.Context(), id, projectID, title, body); err != nil {
+			slog.Error("update project update", "error", err, "id", id, "project_id", projectID)
+			http.Redirect(w, r, "/admin/updates?error="+url.QueryEscape("Update save failed")+"&update_edit="+url.QueryEscape(strconv.FormatInt(id, 10))+"&update_project_id="+url.QueryEscape(strconv.FormatInt(projectID, 10))+"&update_title="+url.QueryEscape(title)+"&update_body="+url.QueryEscape(body), http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/admin/updates?notice="+url.QueryEscape("Project update saved"), http.StatusSeeOther)
+	})
 	mux.HandleFunc("POST /admin/donations/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if !isAdmin(r, adminSessionSecret) {
+		if !isAdmin(r.Context(), r, db) {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 			return
 		}
@@ -530,31 +932,50 @@ func main() {
 			http.Error(w, "invalid form", http.StatusBadRequest)
 			return
 		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
+			return
+		}
 
 		action := strings.TrimSpace(r.FormValue("action"))
+		returnQuery := strings.TrimSpace(r.FormValue("return_query"))
+		if action == "save_note" {
+			if err := db.UpdateDonationModerationNote(r.Context(), id, r.FormValue("moderation_note")); err != nil {
+				slog.Error("update donation moderation note", "error", err, "id", id)
+				http.Redirect(w, r, adminDonationsRedirectPath(returnQuery, "error", "Note save failed"), http.StatusSeeOther)
+				return
+			}
+			http.Redirect(w, r, adminDonationsRedirectPath(returnQuery, "notice", "Donation note saved"), http.StatusSeeOther)
+			return
+		}
 		if action == "refresh_status" {
 			donation, err := db.FindDonationByID(r.Context(), id)
 			if err != nil {
 				slog.Error("find donation for refresh", "error", err, "id", id)
-				http.Redirect(w, r, "/admin/donations?error="+url.QueryEscape("Donation not found"), http.StatusSeeOther)
+				http.Redirect(w, r, adminDonationsRedirectPath(returnQuery, "error", "Donation not found"), http.StatusSeeOther)
 				return
 			}
 			if err := refreshDonationStatus(r.Context(), db, pakasirClientFromEnv(), donation); err != nil {
 				slog.Error("refresh donation status", "error", err, "id", id)
-				http.Redirect(w, r, "/admin/donations?error="+url.QueryEscape("Refresh failed"), http.StatusSeeOther)
+				http.Redirect(w, r, adminDonationsRedirectPath(returnQuery, "error", "Refresh failed"), http.StatusSeeOther)
 				return
 			}
-			http.Redirect(w, r, "/admin/donations?notice="+url.QueryEscape("Donation status refreshed"), http.StatusSeeOther)
+			if updated, err := db.FindDonationByID(r.Context(), id); err == nil {
+				if err := notifyAdminDonationPaid(r.Context(), db, adminMailer, adminEmail, publicBaseURL, updated); err != nil {
+					slog.Error("notify admin donation paid", "error", err, "id", id)
+				}
+			}
+			http.Redirect(w, r, adminDonationsRedirectPath(returnQuery, "notice", "Donation status refreshed"), http.StatusSeeOther)
 			return
 		}
 
 		if err := db.UpdateDonationModeration(r.Context(), id, action); err != nil {
 			slog.Error("update donation moderation", "error", err, "id", id, "action", action)
-			http.Redirect(w, r, "/admin/donations?error="+url.QueryEscape("Update failed"), http.StatusSeeOther)
+			http.Redirect(w, r, adminDonationsRedirectPath(returnQuery, "error", "Update failed"), http.StatusSeeOther)
 			return
 		}
 
-		http.Redirect(w, r, "/admin/donations?notice="+url.QueryEscape("Donation updated"), http.StatusSeeOther)
+		http.Redirect(w, r, adminDonationsRedirectPath(returnQuery, "notice", "Donation updated"), http.StatusSeeOther)
 	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -585,6 +1006,46 @@ func mustSubFS(root fs.FS, dir string) fs.FS {
 func env(key, fallback string) string {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func loadDotenv(path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		idx := strings.Index(line, "=")
+		if idx == -1 {
+			continue
+		}
+		key := strings.TrimSpace(line[:idx])
+		val := strings.TrimSpace(line[idx+1:])
+		if len(val) >= 2 && (val[0] == '"' || val[0] == '\'') && val[0] == val[len(val)-1] {
+			val = val[1 : len(val)-1]
+		}
+		if _, exists := os.LookupEnv(key); !exists {
+			_ = os.Setenv(key, val)
+		}
+	}
+}
+
+func envInt(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
 		return fallback
 	}
 	return value
@@ -694,17 +1155,23 @@ func projectFromRequest(r *http.Request) (app.Project, error) {
 		return app.Project{}, errors.New("goal must be a positive number")
 	}
 
+	deadlineDate, err := app.NormalizeDeadlineDate(r.FormValue("deadline_date"))
+	if err != nil {
+		return app.Project{}, err
+	}
+
 	project := app.Project{
-		Title:       strings.TrimSpace(r.FormValue("title")),
-		Slug:        strings.TrimSpace(r.FormValue("slug")),
-		Summary:     strings.TrimSpace(r.FormValue("summary")),
-		Description: strings.TrimSpace(r.FormValue("description")),
-		Status:      strings.TrimSpace(r.FormValue("status")),
-		Goal:        goal,
-		Accent:      strings.TrimSpace(r.FormValue("accent")),
-		RepoURL:     strings.TrimSpace(r.FormValue("repo_url")),
-		DemoURL:     strings.TrimSpace(r.FormValue("demo_url")),
-		IsActive:    r.FormValue("is_active") == "on",
+		Title:        strings.TrimSpace(r.FormValue("title")),
+		Slug:         strings.TrimSpace(r.FormValue("slug")),
+		Summary:      strings.TrimSpace(r.FormValue("summary")),
+		Description:  strings.TrimSpace(r.FormValue("description")),
+		Status:       strings.TrimSpace(r.FormValue("status")),
+		Goal:         goal,
+		Accent:       strings.TrimSpace(r.FormValue("accent")),
+		RepoURL:      strings.TrimSpace(r.FormValue("repo_url")),
+		DemoURL:      strings.TrimSpace(r.FormValue("demo_url")),
+		DeadlineDate: deadlineDate,
+		IsActive:     r.FormValue("is_active") == "on",
 	}
 
 	switch {
@@ -725,24 +1192,41 @@ func projectFromRequest(r *http.Request) (app.Project, error) {
 	return project, nil
 }
 
-func isAdmin(r *http.Request, secret string) bool {
-	cookie, err := r.Cookie("admin_session")
-	if err != nil {
+func isAdmin(ctx context.Context, r *http.Request, db *store.Store) bool {
+	token := adminSessionToken(r)
+	if token == "" {
 		return false
 	}
-	expected := adminCookieValue(secret)
-	return subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(expected)) == 1
+	ok, err := db.HasActiveAdminSession(ctx, token, time.Now())
+	if err != nil {
+		slog.Error("check admin session", "error", err)
+		return false
+	}
+	return ok
 }
 
-func setAdminCookie(w http.ResponseWriter, secret string, secure bool) {
+func adminSessionToken(r *http.Request) string {
+	cookie, err := r.Cookie("admin_session")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(cookie.Value)
+}
+
+func setAdminCookie(w http.ResponseWriter, token string, secure bool, expiresAt time.Time) {
+	maxAge := int(time.Until(expiresAt).Seconds())
+	if maxAge < 0 {
+		maxAge = 0
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     "admin_session",
-		Value:    adminCookieValue(secret),
+		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   60 * 60 * 24 * 30,
+		Expires:  expiresAt,
+		MaxAge:   maxAge,
 	})
 }
 
@@ -758,10 +1242,160 @@ func clearAdminCookie(w http.ResponseWriter, secure bool) {
 	})
 }
 
-func adminCookieValue(secret string) string {
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte("admin-session"))
-	return hex.EncodeToString(mac.Sum(nil))
+func csrfToken(w http.ResponseWriter, r *http.Request, secret string, secure bool) string {
+	if cookie, err := r.Cookie(csrf.CookieName); err == nil && csrf.Validate(cookie.Value, cookie.Value, secret) {
+		return cookie.Value
+	}
+	token := csrf.NewToken(secret)
+	http.SetCookie(w, csrf.Cookie(token, secure))
+	return token
+}
+
+func requireCSRF(r *http.Request, secret string) bool {
+	cookie, err := r.Cookie(csrf.CookieName)
+	if err != nil {
+		return false
+	}
+	return csrf.Validate(cookie.Value, r.FormValue(csrf.FormField), secret)
+}
+
+func generateLoginToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+func newLoginRateLimiter(limit int, window time.Duration) *loginRateLimiter {
+	return &loginRateLimiter{
+		window:  window,
+		limit:   limit,
+		entries: make(map[string]loginRateEntry),
+	}
+}
+
+func (l *loginRateLimiter) Allow(key string, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	for existingKey, entry := range l.entries {
+		if now.After(entry.expires) {
+			delete(l.entries, existingKey)
+		}
+	}
+
+	entry := l.entries[key]
+	if now.After(entry.expires) {
+		entry = loginRateEntry{expires: now.Add(l.window)}
+	}
+	if entry.count >= l.limit {
+		l.entries[key] = entry
+		return false
+	}
+	entry.count++
+	if entry.expires.IsZero() {
+		entry.expires = now.Add(l.window)
+	}
+	l.entries[key] = entry
+	return true
+}
+
+func adminMagicLoginURL(baseURL, token string) string {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if base == "" {
+		base = "http://127.0.0.1:8094"
+	}
+	return base + "/admin/login/verify#token=" + url.QueryEscape(token)
+}
+
+func adminRateLimitKey(r *http.Request, value string) string {
+	return clientIP(r) + "|" + strings.ToLower(strings.TrimSpace(value))
+}
+
+func adminDonationsPath(rawQuery string) string {
+	rawQuery = strings.TrimSpace(rawQuery)
+	if rawQuery == "" {
+		return "/admin/donations"
+	}
+	return "/admin/donations?" + rawQuery
+}
+
+func adminDonationsRedirectPath(rawQuery, key, value string) string {
+	path := adminDonationsPath(rawQuery)
+	separator := "?"
+	if strings.Contains(path, "?") {
+		separator = "&"
+	}
+	return path + separator + key + "=" + url.QueryEscape(value)
+}
+
+func isDevelopmentEnv(appEnv string) bool {
+	return strings.EqualFold(strings.TrimSpace(appEnv), "development")
+}
+
+func isProductionEnv(appEnv string) bool {
+	return strings.EqualFold(strings.TrimSpace(appEnv), "production")
+}
+
+func notifyAdminDonationPaid(ctx context.Context, db *store.Store, adminMailer mailer.Mailer, adminEmail, publicBaseURL string, donation app.Donation) error {
+	if strings.TrimSpace(adminEmail) == "" || donation.Status != "paid" {
+		return nil
+	}
+	notified, err := db.DonationAdminNotified(ctx, donation.ID)
+	if err != nil {
+		return err
+	}
+	if notified {
+		return nil
+	}
+	adminURL := strings.TrimRight(strings.TrimSpace(publicBaseURL), "/") + "/admin/donations"
+	if strings.TrimSpace(adminURL) == "/admin/donations" {
+		adminURL = "http://127.0.0.1:8094/admin/donations"
+	}
+	if err := adminMailer.SendAdminDonationPaid(adminEmail, donation, adminURL); err != nil {
+		return err
+	}
+	return db.MarkDonationAdminNotified(ctx, donation.ID)
+}
+
+func isLocalPublicBaseURL(baseURL string) bool {
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		return true
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
+func invalidAdminSessionSecret(secret string) bool {
+	secret = strings.TrimSpace(secret)
+	return secret == "" || secret == "change-me"
+}
+
+func clientIP(r *http.Request) string {
+	for _, header := range []string{"CF-Connecting-IP", "X-Forwarded-For", "X-Real-IP"} {
+		raw := strings.TrimSpace(r.Header.Get(header))
+		if raw == "" {
+			continue
+		}
+		if header == "X-Forwarded-For" {
+			raw = strings.TrimSpace(strings.Split(raw, ",")[0])
+		}
+		if raw != "" {
+			return raw
+		}
+	}
+
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err == nil && host != "" {
+		return host
+	}
+	return strings.TrimSpace(r.RemoteAddr)
 }
 
 func pakasirClientFromEnv() payment.PakasirClient {

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Confirm sign in</title>
+  <link rel="stylesheet" href="/static/base.css">
+  <link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+  {{template "site_nav" .}}
+  <main class="center-shell">
+    <section class="admin-auth-panel">
+      <p class="eyebrow">Admin</p>
+      <h1>Confirm sign in</h1>
+      <p class="bio">Finish sign-in from this browser. The token stays in the browser and is only sent when you continue.</p>
+
+      {{if .Error}}
+        <p class="form-alert error">{{.Error}}</p>
+      {{end}}
+
+      <p class="form-alert error" id="verify-error" hidden>That sign-in link is missing or invalid. Request a fresh email.</p>
+
+      <form class="admin-auth-form" method="post" action="/admin/login/verify">
+        <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+        <input type="hidden" id="verify-token" name="token" value="{{.Token}}">
+        <button class="primary-button" id="verify-submit" type="submit">Continue to admin</button>
+      </form>
+
+      <noscript>
+        <p class="form-alert error">JavaScript is required for the hardened sign-in flow.</p>
+      </noscript>
+    </section>
+  </main>
+  {{template "site_footer" .}}
+  <script>
+    (function () {
+      var tokenField = document.getElementById("verify-token");
+      var submitButton = document.getElementById("verify-submit");
+      var errorNotice = document.getElementById("verify-error");
+      if (!tokenField || !submitButton || !errorNotice) {
+        return;
+      }
+
+      var token = tokenField.value;
+      if (window.location.hash.indexOf("#token=") === 0) {
+        token = decodeURIComponent(window.location.hash.slice(7));
+      }
+
+      if (token) {
+        tokenField.value = token;
+        if (window.history && window.history.replaceState) {
+          window.history.replaceState({}, document.title, "/admin/login/verify");
+        }
+        return;
+      }
+
+      submitButton.disabled = true;
+      errorNotice.hidden = false;
+    })();
+  </script>
+</body>
+</html>

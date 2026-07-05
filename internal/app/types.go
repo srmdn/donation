@@ -1,19 +1,22 @@
 package app
 
 type Project struct {
-	ID          int64
-	Title       string
-	Slug        string
-	Summary     string
-	Description string
-	Status      string
-	Raised      int
-	Goal        int
-	Accent      string
-	RepoURL     string
-	DemoURL     string
-	IsActive    bool
-	LastUpdated string
+	ID            int64
+	Title         string
+	Slug          string
+	Summary       string
+	Description   string
+	Status        string
+	Raised        int
+	Goal          int
+	Accent        string
+	RepoURL       string
+	DemoURL       string
+	DeadlineDate  string
+	DeadlineText  string
+	DeadlineEnded bool
+	IsActive      bool
+	LastUpdated   string
 }
 
 type TimelineEvent struct {
@@ -23,6 +26,16 @@ type TimelineEvent struct {
 	Amount  int
 	TimeAgo string
 	Project string
+}
+
+type ProjectUpdate struct {
+	ID           int64
+	ProjectID    int64
+	ProjectSlug  string
+	ProjectTitle string
+	Title        string
+	Body         string
+	PublishedAt  string
 }
 
 type Donation struct {
@@ -69,6 +82,7 @@ type PageData struct {
 	Timeline          []TimelineEvent
 	TimelineHasMore   bool
 	TimelineNextLimit int
+	CSRFToken         string
 }
 
 type ProjectPageData struct {
@@ -89,7 +103,16 @@ type ProjectsIndexPageData struct {
 }
 
 type AdminLoginPageData struct {
-	Error string
+	Error     string
+	Notice    string
+	Email     string
+	CSRFToken string
+}
+
+type AdminLoginVerifyPageData struct {
+	Error     string
+	Token     string
+	CSRFToken string
 }
 
 type AdminProjectsPageData struct {
@@ -99,22 +122,45 @@ type AdminProjectsPageData struct {
 	Error       string
 	Notice      string
 	ActiveCount int
+	CSRFToken   string
+}
+
+type AdminUpdatesPageData struct {
+	Projects        []Project
+	Updates         []ProjectUpdate
+	Error           string
+	Notice          string
+	UpdateEditingID int64
+	UpdateProjectID int64
+	UpdateTitle     string
+	UpdateBody      string
+	CSRFToken       string
 }
 
 type AdminDonationsPageData struct {
-	Donations    []Donation
-	Error        string
-	Notice       string
-	TotalCount   int
-	PaidCount    int
-	PendingCount int
-	PublicCount  int
-	SpamCount    int
+	Donations         []Donation
+	Projects          []Project
+	Error             string
+	Notice            string
+	TotalCount        int
+	PaidCount         int
+	PendingCount      int
+	PublicCount       int
+	SpamCount         int
+	FilterStatus      string
+	FilterVisibility  string
+	FilterSpam        string
+	FilterProjectSlug string
+	FilterQuery       string
+	FilterHasActive   bool
+	SearchQuery       string
+	CSRFToken         string
 }
 
 type PayPageData struct {
-	Builder  Builder
-	Donation Donation
+	Builder   Builder
+	Donation  Donation
+	CSRFToken string
 }
 
 type ThanksPageData struct {
