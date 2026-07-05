@@ -51,6 +51,7 @@ type Donation struct {
 	Status                string
 	Visibility            string
 	IsSpam                bool
+	IsTest                bool
 	ModerationNote        string
 	Provider              string
 	ProviderOrderID       string
@@ -147,11 +148,12 @@ type AdminDonationsPageData struct {
 	PendingCount      int
 	PublicCount       int
 	SpamCount         int
+	TestCount         int
 	FilterStatus      string
 	FilterVisibility  string
 	FilterSpam        string
+	FilterTest        string
 	FilterProjectSlug string
-	FilterQuery       string
 	FilterHasActive   bool
 	SearchQuery       string
 	CSRFToken         string
