@@ -30,28 +30,22 @@ Run locally:
 go run ./cmd/donation
 ```
 
-Default address:
-
-```txt
-127.0.0.1:8094
-```
-
 Default SQLite path:
 
 ```txt
 data/donation.db
 ```
 
-Override:
+Override with your own local bind address and database path:
 
 ```sh
-ADDR=127.0.0.1:3000 DB_PATH=data/dev.db go run ./cmd/donation
+ADDR=127.0.0.1:<your-port> DB_PATH=data/dev.db go run ./cmd/donation
 ```
 
-For Pakasir return links:
+For Pakasir return links, set your own local base URL:
 
 ```txt
-PUBLIC_BASE_URL=http://127.0.0.1:8094
+PUBLIC_BASE_URL=http://127.0.0.1:<your-port>
 ```
 
 Environment:
