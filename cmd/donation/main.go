@@ -52,15 +52,12 @@ func main() {
 	addr := env("ADDR", "127.0.0.1:8094")
 	dbPath := env("DB_PATH", "data/donation.db")
 	publicBaseURL := env("PUBLIC_BASE_URL", "")
+	appEnv := env("APP_ENV", "development")
 	adminEmail := strings.TrimSpace(strings.ToLower(env("ADMIN_EMAIL", "")))
 	adminSessionSecret := env("ADMIN_SESSION_SECRET", "change-me")
 	adminCookieSecure := strings.HasPrefix(strings.ToLower(publicBaseURL), "https://")
 	paymentMode := env("PAYMENT_MODE", "mock")
-	allowLoggedMagicLink := isLocalPublicBaseURL(publicBaseURL)
-	if !allowLoggedMagicLink && invalidAdminSessionSecret(adminSessionSecret) {
-		slog.Error("invalid admin session secret for non-local deployment")
-		os.Exit(1)
-	}
+	allowLoggedMagicLink := isDevelopmentEnv(appEnv) && isLocalPublicBaseURL(publicBaseURL)
 	adminMailer := mailer.New(
 		env("SMTP_HOST", ""),
 		envInt("SMTP_PORT", 587),
@@ -68,6 +65,20 @@ func main() {
 		env("SMTP_PASSWORD", ""),
 		env("MAIL_FROM", ""),
 	)
+	if isProductionEnv(appEnv) {
+		if invalidAdminSessionSecret(adminSessionSecret) {
+			slog.Error("invalid admin session secret for production")
+			os.Exit(1)
+		}
+		if paymentMode == "mock" {
+			slog.Error("mock payment mode is not allowed in production")
+			os.Exit(1)
+		}
+		if !adminMailer.Configured() {
+			slog.Error("smtp must be configured in production")
+			os.Exit(1)
+		}
+	}
 	adminLoginLimiter := newLoginRateLimiter(5, 15*time.Minute)
 	adminVerifyLimiter := newLoginRateLimiter(10, 15*time.Minute)
 	webhookLimiter := newLoginRateLimiter(60, time.Minute)
@@ -214,14 +225,9 @@ func main() {
 			return
 		}
 
-		// Mock mode: mark paid immediately so progress/timeline behavior is visible before Pakasir.
+		// Mock mode keeps the donation pending until explicitly confirmed from the payment page.
 		if paymentMode == "mock" {
-			if err := db.MarkDonationPaid(r.Context(), id); err != nil {
-				slog.Error("mark mock donation paid", "error", err)
-				http.Error(w, "donation failed", http.StatusInternalServerError)
-				return
-			}
-			http.Redirect(w, r, "/thanks?id="+strconv.FormatInt(id, 10), http.StatusSeeOther)
+			http.Redirect(w, r, "/pay/"+strconv.FormatInt(id, 10), http.StatusSeeOther)
 			return
 		}
 
@@ -291,12 +297,51 @@ func main() {
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, "pay.html", app.PayPageData{
-			Builder:  defaultBuilder(),
-			Donation: donation,
+			Builder:   defaultBuilder(),
+			Donation:  donation,
+			CSRFToken: csrfToken(w, r, adminSessionSecret, adminCookieSecure),
 		}); err != nil {
 			slog.Error("render pay page", "error", err)
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}
+	})
+	mux.HandleFunc("POST /pay/{id}/mock-confirm", func(w http.ResponseWriter, r *http.Request) {
+		if paymentMode != "mock" {
+			http.NotFound(w, r)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
+			return
+		}
+
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid donation id", http.StatusBadRequest)
+			return
+		}
+		donation, err := db.FindDonationByID(r.Context(), id)
+		if errors.Is(err, store.ErrNotFound()) {
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			slog.Error("load mock confirm donation", "error", err, "id", id)
+			http.Error(w, "data load failed", http.StatusInternalServerError)
+			return
+		}
+		if donation.Status != "paid" {
+			if err := db.MarkDonationPaid(r.Context(), id); err != nil {
+				slog.Error("mark mock donation paid", "error", err, "id", id)
+				http.Error(w, "payment confirm failed", http.StatusInternalServerError)
+				return
+			}
+		}
+		http.Redirect(w, r, "/thanks?id="+strconv.FormatInt(id, 10), http.StatusSeeOther)
 	})
 	mux.HandleFunc("GET /thanks", func(w http.ResponseWriter, r *http.Request) {
 		page := app.ThanksPageData{
@@ -1240,6 +1285,14 @@ func adminDonationsRedirectPath(rawQuery, key, value string) string {
 		separator = "&"
 	}
 	return path + separator + key + "=" + url.QueryEscape(value)
+}
+
+func isDevelopmentEnv(appEnv string) bool {
+	return strings.EqualFold(strings.TrimSpace(appEnv), "development")
+}
+
+func isProductionEnv(appEnv string) bool {
+	return strings.EqualFold(strings.TrimSpace(appEnv), "production")
 }
 
 func isLocalPublicBaseURL(baseURL string) bool {

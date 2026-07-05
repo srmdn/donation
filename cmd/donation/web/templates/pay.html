@@ -45,6 +45,12 @@
       {{end}}
 
       <div class="pay-actions">
+        {{if eq .Donation.Provider "mock"}}
+          <form method="post" action="/pay/{{.Donation.ID}}/mock-confirm">
+            <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+            <button class="primary-button" type="submit">Simulate payment received</button>
+          </form>
+        {{end}}
         <a class="secondary-link inline-action" href="/thanks?id={{.Donation.ID}}">I already paid</a>
         <a class="secondary-link inline-action" href="/projects/{{.Donation.ProjectSlug}}">Back to project</a>
       </div>

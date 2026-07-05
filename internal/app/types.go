@@ -155,8 +155,9 @@ type AdminDonationsPageData struct {
 }
 
 type PayPageData struct {
-	Builder  Builder
-	Donation Donation
+	Builder   Builder
+	Donation  Donation
+	CSRFToken string
 }
 
 type ThanksPageData struct {

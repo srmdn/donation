@@ -54,6 +54,12 @@ For Pakasir return links:
 PUBLIC_BASE_URL=http://127.0.0.1:8094
 ```
 
+Environment:
+
+```txt
+APP_ENV=development
+```
+
 Admin auth:
 
 ```txt
@@ -72,7 +78,11 @@ Generate a session secret:
 python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-On non-local deployments, the app refuses to start if `ADMIN_SESSION_SECRET` is empty or still `change-me`.
+Production startup guards:
+
+- `APP_ENV=production` refuses to start with `ADMIN_SESSION_SECRET` empty or `change-me`
+- `APP_ENV=production` refuses to start with `PAYMENT_MODE=mock`
+- `APP_ENV=production` refuses to start without SMTP configuration
 
 Pakasir placeholders:
 
@@ -109,8 +119,8 @@ Admin access now uses an email magic link.
 
 - `ADMIN_EMAIL` controls who can request the link
 - the sign-in token is one-time and expires after 15 minutes
-- if SMTP is not configured and `PUBLIC_BASE_URL` is local (`localhost` or `127.0.0.1`), the sign-in link is written to the app log
-- on non-local deployments, admin login fails closed unless SMTP is configured
+- if SMTP is not configured and `APP_ENV=development` with local `PUBLIC_BASE_URL`, the sign-in link is written to the app log
+- outside that development case, admin login fails closed unless SMTP is configured
 
 ## Donation Amounts
 
