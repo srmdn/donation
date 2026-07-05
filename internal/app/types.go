@@ -1,19 +1,22 @@
 package app
 
 type Project struct {
-	ID          int64
-	Title       string
-	Slug        string
-	Summary     string
-	Description string
-	Status      string
-	Raised      int
-	Goal        int
-	Accent      string
-	RepoURL     string
-	DemoURL     string
-	IsActive    bool
-	LastUpdated string
+	ID            int64
+	Title         string
+	Slug          string
+	Summary       string
+	Description   string
+	Status        string
+	Raised        int
+	Goal          int
+	Accent        string
+	RepoURL       string
+	DemoURL       string
+	DeadlineDate  string
+	DeadlineText  string
+	DeadlineEnded bool
+	IsActive      bool
+	LastUpdated   string
 }
 
 type TimelineEvent struct {

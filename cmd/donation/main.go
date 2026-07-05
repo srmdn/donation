@@ -210,6 +210,20 @@ func main() {
 			http.Error(w, "email is required", http.StatusBadRequest)
 			return
 		}
+		project, err := db.FindProject(r.Context(), slug)
+		if errors.Is(err, store.ErrNotFound()) {
+			http.Error(w, "project not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			slog.Error("load donation project", "error", err, "slug", slug)
+			http.Error(w, "donation failed", http.StatusInternalServerError)
+			return
+		}
+		if project.DeadlineEnded {
+			http.Error(w, "periode dukungan untuk proyek ini sudah berakhir", http.StatusBadRequest)
+			return
+		}
 		amount, err := donationAmountFromRequest(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1141,17 +1155,23 @@ func projectFromRequest(r *http.Request) (app.Project, error) {
 		return app.Project{}, errors.New("goal must be a positive number")
 	}
 
+	deadlineDate, err := app.NormalizeDeadlineDate(r.FormValue("deadline_date"))
+	if err != nil {
+		return app.Project{}, err
+	}
+
 	project := app.Project{
-		Title:       strings.TrimSpace(r.FormValue("title")),
-		Slug:        strings.TrimSpace(r.FormValue("slug")),
-		Summary:     strings.TrimSpace(r.FormValue("summary")),
-		Description: strings.TrimSpace(r.FormValue("description")),
-		Status:      strings.TrimSpace(r.FormValue("status")),
-		Goal:        goal,
-		Accent:      strings.TrimSpace(r.FormValue("accent")),
-		RepoURL:     strings.TrimSpace(r.FormValue("repo_url")),
-		DemoURL:     strings.TrimSpace(r.FormValue("demo_url")),
-		IsActive:    r.FormValue("is_active") == "on",
+		Title:        strings.TrimSpace(r.FormValue("title")),
+		Slug:         strings.TrimSpace(r.FormValue("slug")),
+		Summary:      strings.TrimSpace(r.FormValue("summary")),
+		Description:  strings.TrimSpace(r.FormValue("description")),
+		Status:       strings.TrimSpace(r.FormValue("status")),
+		Goal:         goal,
+		Accent:       strings.TrimSpace(r.FormValue("accent")),
+		RepoURL:      strings.TrimSpace(r.FormValue("repo_url")),
+		DemoURL:      strings.TrimSpace(r.FormValue("demo_url")),
+		DeadlineDate: deadlineDate,
+		IsActive:     r.FormValue("is_active") == "on",
 	}
 
 	switch {

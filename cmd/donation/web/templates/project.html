@@ -41,61 +41,74 @@
           <span style="width: {{percent .Project.Raised .Project.Goal}}%"></span>
         </div>
         <p>{{percent .Project.Raised .Project.Goal}} persen tercapai.</p>
+        {{if .Project.DeadlineText}}
+          <p class="deadline-note {{if .Project.DeadlineEnded}}ended{{end}}">{{.Project.DeadlineText}}</p>
+        {{end}}
       </aside>
     </section>
 
     <section class="donation-layout">
-      <form class="donation-form" method="post" action="/donations">
-        <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
-        <input type="hidden" name="project_slug" value="{{.Project.Slug}}">
+      {{if .Project.DeadlineEnded}}
+        <section class="donation-form donation-closed" aria-label="Pendanaan selesai">
+          <div class="form-heading">
+            <p class="eyebrow">Pendanaan selesai</p>
+            <h2>Periode dukungan sudah berakhir.</h2>
+          </div>
+          <p>Halaman proyek tetap bisa diakses untuk melihat progres, pembaruan, dan riwayat dukungan yang sudah masuk.</p>
+        </section>
+      {{else}}
+        <form class="donation-form" method="post" action="/donations">
+          <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+          <input type="hidden" name="project_slug" value="{{.Project.Slug}}">
 
-        <div class="form-heading">
-          <p class="eyebrow">Dukung proyek ini</p>
-          <h2>Pilih nominal.</h2>
-        </div>
+          <div class="form-heading">
+            <p class="eyebrow">Dukung proyek ini</p>
+            <h2>Pilih nominal.</h2>
+          </div>
 
-        <fieldset class="amount-grid">
-          <legend>Nominal rekomendasi</legend>
-          <label>
-            <input type="radio" name="amount" value="25000" checked>
-            <span>Rp 25.000</span>
+          <fieldset class="amount-grid">
+            <legend>Nominal rekomendasi</legend>
+            <label>
+              <input type="radio" name="amount" value="25000" checked>
+              <span>Rp 25.000</span>
+            </label>
+            <label>
+              <input type="radio" name="amount" value="50000">
+              <span>Rp 50.000</span>
+            </label>
+            <label>
+              <input type="radio" name="amount" value="100000">
+              <span>Rp 100.000</span>
+            </label>
+          </fieldset>
+
+          <label class="field">
+            <span>Nominal custom</span>
+            <input name="custom_amount" type="number" min="25000" step="1000" inputmode="numeric" placeholder="25000">
+            <small>Kosongkan jika ingin memakai nominal rekomendasi. Minimum donasi adalah Rp25.000.</small>
           </label>
-          <label>
-            <input type="radio" name="amount" value="50000">
-            <span>Rp 50.000</span>
+
+          <label class="field">
+            <span>Nama</span>
+            <input name="name" autocomplete="name" placeholder="Nama Anda">
+            <small>Opsional. Jika kosong, akan tampil sebagai Orang Baik.</small>
           </label>
-          <label>
-            <input type="radio" name="amount" value="100000">
-            <span>Rp 100.000</span>
+
+          <label class="field">
+            <span>Email</span>
+            <input name="email" type="email" autocomplete="email" placeholder="nama@email.com" required>
+            <small>Wajib. Digunakan untuk notifikasi perkembangan proyek dan tidak ditampilkan ke publik.</small>
           </label>
-        </fieldset>
 
-        <label class="field">
-          <span>Nominal custom</span>
-          <input name="custom_amount" type="number" min="25000" step="1000" inputmode="numeric" placeholder="25000">
-          <small>Kosongkan jika ingin memakai nominal rekomendasi. Minimum donasi adalah Rp25.000.</small>
-        </label>
+          <label class="field">
+            <span>Pesan</span>
+            <textarea name="message" rows="4" placeholder="Pesan dukungan Anda"></textarea>
+            <small>Opsional.</small>
+          </label>
 
-        <label class="field">
-          <span>Nama</span>
-          <input name="name" autocomplete="name" placeholder="Nama Anda">
-          <small>Opsional. Jika kosong, akan tampil sebagai Orang Baik.</small>
-        </label>
-
-        <label class="field">
-          <span>Email</span>
-          <input name="email" type="email" autocomplete="email" placeholder="nama@email.com" required>
-          <small>Wajib. Digunakan untuk notifikasi perkembangan proyek dan tidak ditampilkan ke publik.</small>
-        </label>
-
-        <label class="field">
-          <span>Pesan</span>
-          <textarea name="message" rows="4" placeholder="Pesan dukungan Anda"></textarea>
-          <small>Opsional.</small>
-        </label>
-
-        <button class="primary-button" type="submit">Lanjut ke pembayaran</button>
-      </form>
+          <button class="primary-button" type="submit">Lanjut ke pembayaran</button>
+        </form>
+      {{end}}
 
       <aside id="timeline" class="timeline-preview" aria-label="Aktivitas proyek">
         <p class="eyebrow">Aktivitas terbaru</p>

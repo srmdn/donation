@@ -162,6 +162,7 @@ func (s *Store) listProjectsWithLimit(ctx context.Context, activeOnly bool, limi
 			p.accent,
 			p.repo_url,
 			p.demo_url,
+			coalesce(p.deadline_date, ''),
 			p.is_active,
 			coalesce(sum(case when d.status = 'paid' and d.is_spam = 0 then d.amount else 0 end), 0) as raised,
 			coalesce(max(case when u.published_at is not null then u.published_at end), p.updated_at) as last_updated
@@ -192,6 +193,7 @@ func (s *Store) listProjectsWithLimit(ctx context.Context, activeOnly bool, limi
 			&project.Accent,
 			&project.RepoURL,
 			&project.DemoURL,
+			&project.DeadlineDate,
 			&project.IsActive,
 			&project.Raised,
 			&updatedAt,
@@ -199,6 +201,7 @@ func (s *Store) listProjectsWithLimit(ctx context.Context, activeOnly bool, limi
 			return nil, err
 		}
 		project.LastUpdated = relativeTime(updatedAt)
+		project.DeadlineText, project.DeadlineEnded = app.DeadlineStatus(project.DeadlineDate, time.Now())
 		projects = append(projects, project)
 	}
 	return projects, rows.Err()
@@ -682,18 +685,18 @@ func (s *Store) UpdateDonationModerationNote(ctx context.Context, id int64, note
 
 func (s *Store) CreateProject(ctx context.Context, project app.Project) error {
 	_, err := s.db.ExecContext(ctx, `
-		insert into projects (title, slug, summary, description, status, goal_amount, accent, repo_url, demo_url, is_active, created_at, updated_at)
-		values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-	`, project.Title, project.Slug, project.Summary, project.Description, project.Status, project.Goal, project.Accent, project.RepoURL, project.DemoURL, boolToInt(project.IsActive))
+		insert into projects (title, slug, summary, description, status, goal_amount, accent, repo_url, demo_url, deadline_date, is_active, created_at, updated_at)
+		values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+	`, project.Title, project.Slug, project.Summary, project.Description, project.Status, project.Goal, project.Accent, project.RepoURL, project.DemoURL, nullIfEmpty(project.DeadlineDate), boolToInt(project.IsActive))
 	return err
 }
 
 func (s *Store) UpdateProject(ctx context.Context, project app.Project) error {
 	result, err := s.db.ExecContext(ctx, `
 		update projects
-		set title = ?, slug = ?, summary = ?, description = ?, status = ?, goal_amount = ?, accent = ?, repo_url = ?, demo_url = ?, is_active = ?, updated_at = datetime('now')
+		set title = ?, slug = ?, summary = ?, description = ?, status = ?, goal_amount = ?, accent = ?, repo_url = ?, demo_url = ?, deadline_date = ?, is_active = ?, updated_at = datetime('now')
 		where id = ?
-	`, project.Title, project.Slug, project.Summary, project.Description, project.Status, project.Goal, project.Accent, project.RepoURL, project.DemoURL, boolToInt(project.IsActive), project.ID)
+	`, project.Title, project.Slug, project.Summary, project.Description, project.Status, project.Goal, project.Accent, project.RepoURL, project.DemoURL, nullIfEmpty(project.DeadlineDate), boolToInt(project.IsActive), project.ID)
 	if err != nil {
 		return err
 	}
@@ -942,6 +945,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			accent text not null,
 			repo_url text not null default '',
 			demo_url text not null default '',
+			deadline_date text,
 			is_active integer not null default 1,
 			created_at text not null,
 			updated_at text not null
@@ -1009,6 +1013,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	alterStatements := []string{
 		`alter table projects add column repo_url text not null default ''`,
 		`alter table projects add column demo_url text not null default ''`,
+		`alter table projects add column deadline_date text`,
 		`alter table donations add column visibility text not null default 'public'`,
 		`alter table donations add column is_spam integer not null default 0`,
 		`alter table donations add column moderation_note text not null default ''`,
