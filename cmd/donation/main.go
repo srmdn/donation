@@ -3,9 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
-	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
 	"encoding/hex"
@@ -385,14 +383,14 @@ func main() {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 	mux.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) {
-		if !isAdmin(r, adminSessionSecret) {
+		if !isAdmin(r.Context(), r, db) {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 			return
 		}
 		http.Redirect(w, r, "/admin/projects", http.StatusSeeOther)
 	})
 	mux.HandleFunc("GET /admin/login", func(w http.ResponseWriter, r *http.Request) {
-		if isAdmin(r, adminSessionSecret) {
+		if isAdmin(r.Context(), r, db) {
 			http.Redirect(w, r, "/admin/projects", http.StatusSeeOther)
 			return
 		}
@@ -505,7 +503,20 @@ func main() {
 			return
 		}
 
-		setAdminCookie(w, adminSessionSecret, adminCookieSecure)
+		sessionToken, err := generateLoginToken()
+		if err != nil {
+			slog.Error("generate admin session token", "error", err)
+			http.Error(w, "login failed", http.StatusInternalServerError)
+			return
+		}
+		sessionExpiresAt := time.Now().Add(30 * 24 * time.Hour)
+		if err := db.CreateAdminSession(r.Context(), sessionToken, sessionExpiresAt); err != nil {
+			slog.Error("store admin session", "error", err)
+			http.Error(w, "login failed", http.StatusInternalServerError)
+			return
+		}
+
+		setAdminCookie(w, sessionToken, adminCookieSecure, sessionExpiresAt)
 		http.Redirect(w, r, "/admin/projects?notice="+url.QueryEscape("Signed in"), http.StatusSeeOther)
 	})
 	mux.HandleFunc("POST /admin/logout", func(w http.ResponseWriter, r *http.Request) {
@@ -517,11 +528,18 @@ func main() {
 			http.Error(w, "invalid csrf token", http.StatusForbidden)
 			return
 		}
+		if token := adminSessionToken(r); token != "" {
+			if err := db.DeleteAdminSession(r.Context(), token); err != nil {
+				slog.Error("delete admin session", "error", err)
+				http.Error(w, "logout failed", http.StatusInternalServerError)
+				return
+			}
+		}
 		clearAdminCookie(w, adminCookieSecure)
 		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 	})
 	mux.HandleFunc("GET /admin/projects", func(w http.ResponseWriter, r *http.Request) {
-		if !isAdmin(r, adminSessionSecret) {
+		if !isAdmin(r.Context(), r, db) {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 			return
 		}
@@ -564,7 +582,7 @@ func main() {
 		}
 	})
 	mux.HandleFunc("GET /admin/donations", func(w http.ResponseWriter, r *http.Request) {
-		if !isAdmin(r, adminSessionSecret) {
+		if !isAdmin(r.Context(), r, db) {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 			return
 		}
@@ -605,7 +623,7 @@ func main() {
 		}
 	})
 	mux.HandleFunc("POST /admin/projects", func(w http.ResponseWriter, r *http.Request) {
-		if !isAdmin(r, adminSessionSecret) {
+		if !isAdmin(r.Context(), r, db) {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 			return
 		}
@@ -631,7 +649,7 @@ func main() {
 		http.Redirect(w, r, "/admin/projects?notice="+url.QueryEscape("Project created"), http.StatusSeeOther)
 	})
 	mux.HandleFunc("POST /admin/projects/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if !isAdmin(r, adminSessionSecret) {
+		if !isAdmin(r.Context(), r, db) {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 			return
 		}
@@ -664,7 +682,7 @@ func main() {
 		http.Redirect(w, r, "/admin/projects?notice="+url.QueryEscape("Project updated"), http.StatusSeeOther)
 	})
 	mux.HandleFunc("POST /admin/donations/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if !isAdmin(r, adminSessionSecret) {
+		if !isAdmin(r.Context(), r, db) {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 			return
 		}
@@ -917,24 +935,41 @@ func projectFromRequest(r *http.Request) (app.Project, error) {
 	return project, nil
 }
 
-func isAdmin(r *http.Request, secret string) bool {
-	cookie, err := r.Cookie("admin_session")
-	if err != nil {
+func isAdmin(ctx context.Context, r *http.Request, db *store.Store) bool {
+	token := adminSessionToken(r)
+	if token == "" {
 		return false
 	}
-	expected := adminCookieValue(secret)
-	return subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(expected)) == 1
+	ok, err := db.HasActiveAdminSession(ctx, token, time.Now())
+	if err != nil {
+		slog.Error("check admin session", "error", err)
+		return false
+	}
+	return ok
 }
 
-func setAdminCookie(w http.ResponseWriter, secret string, secure bool) {
+func adminSessionToken(r *http.Request) string {
+	cookie, err := r.Cookie("admin_session")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(cookie.Value)
+}
+
+func setAdminCookie(w http.ResponseWriter, token string, secure bool, expiresAt time.Time) {
+	maxAge := int(time.Until(expiresAt).Seconds())
+	if maxAge < 0 {
+		maxAge = 0
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     "admin_session",
-		Value:    adminCookieValue(secret),
+		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   60 * 60 * 24 * 30,
+		Expires:  expiresAt,
+		MaxAge:   maxAge,
 	})
 }
 
@@ -948,12 +983,6 @@ func clearAdminCookie(w http.ResponseWriter, secure bool) {
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})
-}
-
-func adminCookieValue(secret string) string {
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte("admin-session"))
-	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func csrfToken(w http.ResponseWriter, r *http.Request, secret string, secure bool) string {

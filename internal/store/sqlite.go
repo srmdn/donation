@@ -642,6 +642,38 @@ func (s *Store) CreateAdminLoginToken(ctx context.Context, email, token string, 
 	return err
 }
 
+func (s *Store) CreateAdminSession(ctx context.Context, token string, expiresAt time.Time) error {
+	_, err := s.db.ExecContext(ctx, `
+		insert into admin_sessions (token_hash, expires_at, created_at)
+		values (?, ?, datetime('now'))
+	`, hashLoginToken(token), expiresAt.Format("2006-01-02 15:04:05"))
+	return err
+}
+
+func (s *Store) HasActiveAdminSession(ctx context.Context, token string, now time.Time) (bool, error) {
+	var exists int
+	err := s.db.QueryRowContext(ctx, `
+		select 1
+		from admin_sessions
+		where token_hash = ? and expires_at > ?
+	`, hashLoginToken(token), now.Format("2006-01-02 15:04:05")).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *Store) DeleteAdminSession(ctx context.Context, token string) error {
+	_, err := s.db.ExecContext(ctx, `
+		delete from admin_sessions
+		where token_hash = ?
+	`, hashLoginToken(token))
+	return err
+}
+
 func (s *Store) PeekAdminLoginToken(ctx context.Context, token string, now time.Time) (string, error) {
 	var email string
 	err := s.db.QueryRowContext(ctx, `
@@ -762,6 +794,13 @@ func (s *Store) migrate(ctx context.Context) error {
 			token_hash text not null unique,
 			expires_at text not null,
 			used_at text,
+			created_at text not null
+		);
+
+		create table if not exists admin_sessions (
+			id integer primary key autoincrement,
+			token_hash text not null unique,
+			expires_at text not null,
 			created_at text not null
 		);
 
