@@ -257,10 +257,10 @@ func (s *Store) ListTimeline(ctx context.Context, projectSlug string, limit int)
 			select
 				'donation' as kind,
 				case
-					when donor_name = '' then 'Anonymous supported ' || p.title
-					else donor_name || ' supported ' || p.title
+					when donor_name = '' then 'Orang Baik mendukung ' || p.title
+					else donor_name || ' mendukung ' || p.title
 				end as title,
-				coalesce(nullif(message, ''), 'No public message.') as detail,
+				coalesce(nullif(message, ''), 'Tanpa pesan publik.') as detail,
 				d.amount as amount,
 				p.title as project,
 				d.paid_at as occurred_at,
@@ -470,6 +470,31 @@ func (s *Store) UpdateDonationProviderStatus(ctx context.Context, id int64, stat
 	return err
 }
 
+func (s *Store) DonationAdminNotified(ctx context.Context, id int64) (bool, error) {
+	var exists int
+	err := s.db.QueryRowContext(ctx, `
+		select 1
+		from donations
+		where id = ? and admin_notified_at is not null
+	`, id).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *Store) MarkDonationAdminNotified(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `
+		update donations
+		set admin_notified_at = datetime('now'), updated_at = datetime('now')
+		where id = ?
+	`, id)
+	return err
+}
+
 func (s *Store) ListAdminDonations(ctx context.Context, limit int, status, visibility, spam, projectSlug, search string) ([]app.Donation, error) {
 	if limit <= 0 {
 		limit = 100
@@ -591,6 +616,11 @@ func scanDonation(scanner interface {
 		return app.Donation{}, err
 	}
 	donation.IsSpam = isSpam == 1
+	donation.CreatedAt = displayJakartaTime(donation.CreatedAt)
+	donation.UpdatedAt = displayJakartaTime(donation.UpdatedAt)
+	donation.PaidAt = displayJakartaTime(donation.PaidAt)
+	donation.ProviderExpiredAt = displayJakartaTime(donation.ProviderExpiredAt)
+	donation.ProviderCompletedAt = displayJakartaTime(donation.ProviderCompletedAt)
 	return donation, nil
 }
 
@@ -788,6 +818,7 @@ func (s *Store) ListAdminProjectUpdates(ctx context.Context, limit int) ([]app.P
 		); err != nil {
 			return nil, err
 		}
+		update.PublishedAt = displayJakartaTime(update.PublishedAt)
 		updates = append(updates, update)
 	}
 	return updates, rows.Err()
@@ -938,6 +969,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			provider_total_payment integer not null default 0,
 			provider_expired_at text,
 			provider_completed_at text,
+			admin_notified_at text,
 			paid_at text,
 			created_at text not null,
 			updated_at text not null
@@ -986,6 +1018,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		`alter table donations add column provider_total_payment integer not null default 0`,
 		`alter table donations add column provider_expired_at text`,
 		`alter table donations add column provider_completed_at text`,
+		`alter table donations add column admin_notified_at text`,
 	}
 	for _, statement := range alterStatements {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
@@ -1120,23 +1153,43 @@ func (s *Store) seed(ctx context.Context) error {
 func relativeTime(value string) string {
 	t, err := time.Parse("2006-01-02 15:04:05", value)
 	if err != nil {
-		return "recently"
+		return "baru saja"
 	}
 
 	diff := time.Since(t)
 	if diff < time.Minute {
-		return "just now"
+		return "baru saja"
 	}
 	if diff < time.Hour {
-		return fmt.Sprintf("%d min ago", int(diff.Minutes()))
+		return fmt.Sprintf("%d menit lalu", int(diff.Minutes()))
 	}
 	if diff < 48*time.Hour {
-		return fmt.Sprintf("%d hr ago", int(diff.Hours()))
+		return fmt.Sprintf("%d jam lalu", int(diff.Hours()))
 	}
 	if diff < 14*24*time.Hour {
-		return fmt.Sprintf("%d days ago", int(diff.Hours()/24))
+		return fmt.Sprintf("%d hari lalu", int(diff.Hours()/24))
 	}
-	return t.Format("2 Jan 2006")
+	return t.In(jakartaLocation()).Format("2 Jan 2006")
+}
+
+func displayJakartaTime(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	t, err := time.Parse("2006-01-02 15:04:05", value)
+	if err != nil {
+		return value
+	}
+	return t.In(jakartaLocation()).Format("2 Jan 2006 15:04 WIB")
+}
+
+func jakartaLocation() *time.Location {
+	loc, err := time.LoadLocation("Asia/Jakarta")
+	if err == nil {
+		return loc
+	}
+	return time.FixedZone("WIB", 7*60*60)
 }
 
 func boolToInt(value bool) int {

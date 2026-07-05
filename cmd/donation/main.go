@@ -205,6 +205,11 @@ func main() {
 			http.Error(w, "missing project", http.StatusBadRequest)
 			return
 		}
+		email := strings.TrimSpace(strings.ToLower(r.FormValue("email")))
+		if email == "" {
+			http.Error(w, "email is required", http.StatusBadRequest)
+			return
+		}
 		amount, err := donationAmountFromRequest(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -215,7 +220,7 @@ func main() {
 			r.Context(),
 			slug,
 			strings.TrimSpace(r.FormValue("name")),
-			strings.TrimSpace(r.FormValue("email")),
+			email,
 			strings.TrimSpace(r.FormValue("message")),
 			amount,
 		)
@@ -340,6 +345,11 @@ func main() {
 				http.Error(w, "payment confirm failed", http.StatusInternalServerError)
 				return
 			}
+			if updated, err := db.FindDonationByID(r.Context(), id); err == nil {
+				if err := notifyAdminDonationPaid(r.Context(), db, adminMailer, adminEmail, publicBaseURL, updated); err != nil {
+					slog.Error("notify admin donation paid", "error", err, "id", id)
+				}
+			}
 		}
 		http.Redirect(w, r, "/thanks?id="+strconv.FormatInt(id, 10), http.StatusSeeOther)
 	})
@@ -359,6 +369,9 @@ func main() {
 							slog.Warn("refresh donation status", "error", err, "id", donation.ID)
 						} else if updated, err := db.FindDonationByID(r.Context(), donationID); err == nil {
 							donation = updated
+							if err := notifyAdminDonationPaid(r.Context(), db, adminMailer, adminEmail, publicBaseURL, donation); err != nil {
+								slog.Error("notify admin donation paid", "error", err, "id", donation.ID)
+							}
 						}
 					}
 					page.Donation = donation
@@ -432,6 +445,11 @@ func main() {
 			slog.Error("refresh donation status from webhook", "error", err, "donation_id", donation.ID, "order_id", payload.OrderID)
 			http.Error(w, "verification failed", http.StatusBadGateway)
 			return
+		}
+		if updated, err := db.FindDonationByID(r.Context(), donation.ID); err == nil {
+			if err := notifyAdminDonationPaid(r.Context(), db, adminMailer, adminEmail, publicBaseURL, updated); err != nil {
+				slog.Error("notify admin donation paid", "error", err, "id", updated.ID)
+			}
 		}
 
 		w.WriteHeader(http.StatusOK)
@@ -928,6 +946,11 @@ func main() {
 				http.Redirect(w, r, adminDonationsRedirectPath(returnQuery, "error", "Refresh failed"), http.StatusSeeOther)
 				return
 			}
+			if updated, err := db.FindDonationByID(r.Context(), id); err == nil {
+				if err := notifyAdminDonationPaid(r.Context(), db, adminMailer, adminEmail, publicBaseURL, updated); err != nil {
+					slog.Error("notify admin donation paid", "error", err, "id", id)
+				}
+			}
 			http.Redirect(w, r, adminDonationsRedirectPath(returnQuery, "notice", "Donation status refreshed"), http.StatusSeeOther)
 			return
 		}
@@ -1293,6 +1316,27 @@ func isDevelopmentEnv(appEnv string) bool {
 
 func isProductionEnv(appEnv string) bool {
 	return strings.EqualFold(strings.TrimSpace(appEnv), "production")
+}
+
+func notifyAdminDonationPaid(ctx context.Context, db *store.Store, adminMailer mailer.Mailer, adminEmail, publicBaseURL string, donation app.Donation) error {
+	if strings.TrimSpace(adminEmail) == "" || donation.Status != "paid" {
+		return nil
+	}
+	notified, err := db.DonationAdminNotified(ctx, donation.ID)
+	if err != nil {
+		return err
+	}
+	if notified {
+		return nil
+	}
+	adminURL := strings.TrimRight(strings.TrimSpace(publicBaseURL), "/") + "/admin/donations"
+	if strings.TrimSpace(adminURL) == "/admin/donations" {
+		adminURL = "http://127.0.0.1:8094/admin/donations"
+	}
+	if err := adminMailer.SendAdminDonationPaid(adminEmail, donation, adminURL); err != nil {
+		return err
+	}
+	return db.MarkDonationAdminNotified(ctx, donation.ID)
 }
 
 func isLocalPublicBaseURL(baseURL string) bool {

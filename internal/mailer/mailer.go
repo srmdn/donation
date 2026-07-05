@@ -6,10 +6,13 @@ import (
 	"net"
 	"net/smtp"
 	"strings"
+
+	"github.com/srmdn/donation/internal/app"
 )
 
 type Mailer interface {
 	SendMagicLink(to, link string) error
+	SendAdminDonationPaid(to string, donation app.Donation, adminURL string) error
 	Configured() bool
 }
 
@@ -30,6 +33,11 @@ type LogMailer struct{}
 
 func (LogMailer) SendMagicLink(to, link string) error {
 	log.Printf("magic login link for %s: %s", to, link)
+	return nil
+}
+
+func (LogMailer) SendAdminDonationPaid(to string, donation app.Donation, adminURL string) error {
+	log.Printf("admin paid donation notice for %s: project=%s amount=%d donor=%s order_id=%s admin=%s", to, donation.ProjectTitle, donation.Amount, donation.DonorName, donation.ProviderOrderID, adminURL)
 	return nil
 }
 
@@ -59,6 +67,33 @@ func (m SMTPMailer) SendMagicLink(to, link string) error {
 		link,
 		"",
 		"This link expires in 15 minutes. If you did not request it, you can ignore this email.",
+	}, "\r\n")
+	return smtp.SendMail(addr, auth, m.From, []string{to}, []byte(msg))
+}
+
+func (m SMTPMailer) SendAdminDonationPaid(to string, donation app.Donation, adminURL string) error {
+	addr := net.JoinHostPort(m.Host, fmt.Sprint(m.Port))
+	auth := smtp.PlainAuth("", m.Username, m.Password, m.Host)
+	donorName := strings.TrimSpace(donation.DonorName)
+	if donorName == "" {
+		donorName = "Anonymous"
+	}
+	msg := strings.Join([]string{
+		"From: " + m.From,
+		"To: " + to,
+		"Subject: Donation paid: " + donation.ProjectTitle,
+		"MIME-Version: 1.0",
+		"Content-Type: text/plain; charset=UTF-8",
+		"",
+		"A donation has been marked paid.",
+		"",
+		"Project: " + donation.ProjectTitle,
+		fmt.Sprintf("Amount: Rp %d", donation.Amount),
+		"Donor: " + donorName,
+		"Provider: " + donation.Provider,
+		"Order ID: " + donation.ProviderOrderID,
+		"",
+		"Admin: " + adminURL,
 	}, "\r\n")
 	return smtp.SendMail(addr, auth, m.From, []string{to}, []byte(msg))
 }

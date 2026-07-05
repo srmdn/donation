@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{.Project.Title}} - support {{.Builder.Name}}</title>
+  <title>{{.Project.Title}} - dukung {{.Builder.Name}}</title>
   <link rel="stylesheet" href="/static/base.css">
   <link rel="stylesheet" href="/static/public.css">
 </head>
@@ -11,7 +11,7 @@
   {{template "site_nav" .}}
   <main class="detail-shell">
     <nav class="top-nav" aria-label="Breadcrumb">
-      <a href="/">Back to projects</a>
+      <a href="/">Kembali ke proyek</a>
       <span>@{{.Builder.Handle}}</span>
     </nav>
 
@@ -20,6 +20,7 @@
         <p class="eyebrow">{{.Project.Status}}</p>
         <h1>{{.Project.Title}}</h1>
         <p class="lede">{{.Project.Description}}</p>
+        <p class="bio">Proyek terakhir diperbarui: {{.Project.LastUpdated}}</p>
         {{if or .Project.RepoURL .Project.DemoURL}}
           <div class="project-links">
             {{if .Project.RepoURL}}
@@ -32,14 +33,14 @@
         {{end}}
       </div>
 
-      <aside class="funding-panel" aria-label="Funding progress">
-        <span class="panel-label">Funding progress</span>
+      <aside class="funding-panel" aria-label="Progress pendanaan">
+        <span class="panel-label">Progress pendanaan</span>
         <strong>{{rupiah .Project.Raised}}</strong>
-        <span>of {{rupiah .Project.Goal}}</span>
+        <span>dari {{rupiah .Project.Goal}}</span>
         <div class="meter">
           <span style="width: {{percent .Project.Raised .Project.Goal}}%"></span>
         </div>
-        <p>{{percent .Project.Raised .Project.Goal}} percent funded. Last update {{.Project.LastUpdated}}.</p>
+        <p>{{percent .Project.Raised .Project.Goal}} persen tercapai.</p>
       </aside>
     </section>
 
@@ -49,12 +50,12 @@
         <input type="hidden" name="project_slug" value="{{.Project.Slug}}">
 
         <div class="form-heading">
-          <p class="eyebrow">Support this project</p>
-          <h2>Choose amount.</h2>
+          <p class="eyebrow">Dukung proyek ini</p>
+          <h2>Pilih nominal.</h2>
         </div>
 
         <fieldset class="amount-grid">
-          <legend>Suggested amounts</legend>
+          <legend>Nominal rekomendasi</legend>
           <label>
             <input type="radio" name="amount" value="25000" checked>
             <span>Rp 25.000</span>
@@ -70,33 +71,34 @@
         </fieldset>
 
         <label class="field">
-          <span>Custom amount</span>
+          <span>Nominal custom</span>
           <input name="custom_amount" type="number" min="25000" step="1000" inputmode="numeric" placeholder="25000">
-          <small>Leave empty to use a suggested amount. Minimum donation is Rp25.000.</small>
+          <small>Kosongkan jika ingin memakai nominal rekomendasi. Minimum donasi adalah Rp25.000.</small>
         </label>
 
         <label class="field">
-          <span>Name</span>
-          <input name="name" autocomplete="name" placeholder="Anonymous">
-          <small>Shown on public timeline only if filled.</small>
+          <span>Nama</span>
+          <input name="name" autocomplete="name" placeholder="Nama Anda">
+          <small>Opsional. Jika kosong, akan tampil sebagai Orang Baik.</small>
         </label>
 
         <label class="field">
           <span>Email</span>
-          <input name="email" type="email" autocomplete="email" placeholder="you@example.com">
-          <small>Used later for progress updates. Never public.</small>
+          <input name="email" type="email" autocomplete="email" placeholder="nama@email.com" required>
+          <small>Wajib. Digunakan untuk notifikasi perkembangan proyek dan tidak ditampilkan ke publik.</small>
         </label>
 
         <label class="field">
-          <span>Message</span>
-          <textarea name="message" rows="4" placeholder="Short note for the builder"></textarea>
+          <span>Pesan</span>
+          <textarea name="message" rows="4" placeholder="Pesan dukungan Anda"></textarea>
+          <small>Opsional.</small>
         </label>
 
-        <button class="primary-button" type="submit">Continue to payment</button>
+        <button class="primary-button" type="submit">Lanjut ke pembayaran</button>
       </form>
 
-      <aside id="timeline" class="timeline-preview" aria-label="Project timeline">
-        <p class="eyebrow">Recent activity</p>
+      <aside id="timeline" class="timeline-preview" aria-label="Aktivitas proyek">
+        <p class="eyebrow">Aktivitas terbaru</p>
         <ol class="timeline">
           {{range .Timeline}}
             <li class="timeline-item event-{{.Kind}}">
@@ -118,7 +120,7 @@
 
         {{if .TimelineHasMore}}
           <div class="timeline-actions">
-            <a class="secondary-link inline-action" href="/projects/{{.Project.Slug}}?timeline_limit={{.TimelineNextLimit}}#timeline">Read more</a>
+            <a class="secondary-link inline-action" href="/projects/{{.Project.Slug}}?timeline_limit={{.TimelineNextLimit}}#timeline">Lihat lebih banyak</a>
           </div>
         {{end}}
       </aside>
