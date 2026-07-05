@@ -642,6 +642,22 @@ func (s *Store) CreateAdminLoginToken(ctx context.Context, email, token string, 
 	return err
 }
 
+func (s *Store) PeekAdminLoginToken(ctx context.Context, token string, now time.Time) (string, error) {
+	var email string
+	err := s.db.QueryRowContext(ctx, `
+		select email
+		from admin_login_tokens
+		where token_hash = ? and used_at is null and expires_at > ?
+	`, hashLoginToken(token), now.Format("2006-01-02 15:04:05")).Scan(&email)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrInvalidAdminLoginToken
+	}
+	if err != nil {
+		return "", err
+	}
+	return email, nil
+}
+
 func (s *Store) ConsumeAdminLoginToken(ctx context.Context, token string, now time.Time) (string, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

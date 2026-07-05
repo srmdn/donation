@@ -96,6 +96,12 @@ type AdminLoginPageData struct {
 	CSRFToken string
 }
 
+type AdminLoginVerifyPageData struct {
+	Error     string
+	Token     string
+	CSRFToken string
+}
+
 type AdminProjectsPageData struct {
 	Projects    []Project
 	Editing     Project

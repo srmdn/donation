@@ -15,11 +15,13 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/srmdn/donation/internal/app"
@@ -33,6 +35,18 @@ import (
 var assets embed.FS
 
 const minDonationAmount = 25000
+
+type loginRateLimiter struct {
+	mu      sync.Mutex
+	window  time.Duration
+	limit   int
+	entries map[string]loginRateEntry
+}
+
+type loginRateEntry struct {
+	count   int
+	expires time.Time
+}
 
 func main() {
 	loadDotenv(".env")
@@ -51,6 +65,8 @@ func main() {
 		env("SMTP_PASSWORD", ""),
 		env("MAIL_FROM", ""),
 	)
+	adminLoginLimiter := newLoginRateLimiter(5, 15*time.Minute)
+	adminVerifyLimiter := newLoginRateLimiter(10, 15*time.Minute)
 	staticFS := mustSubFS(assets, "web/static")
 	db, err := store.Open(dbPath)
 	if err != nil {
@@ -381,6 +397,7 @@ func main() {
 			return
 		}
 
+		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, "admin_login.html", app.AdminLoginPageData{
 			Error:     strings.TrimSpace(r.URL.Query().Get("error")),
@@ -411,6 +428,10 @@ func main() {
 			http.Redirect(w, r, "/admin/login?error="+url.QueryEscape("Admin email is not configured"), http.StatusSeeOther)
 			return
 		}
+		if !adminLoginLimiter.Allow(adminRateLimitKey(r, email), time.Now()) {
+			http.Redirect(w, r, "/admin/login?error="+url.QueryEscape("Too many sign-in attempts. Wait a few minutes and try again.")+"&email="+url.QueryEscape(email), http.StatusSeeOther)
+			return
+		}
 
 		notice := "If that email can access admin, a sign-in link is ready."
 		if subtle.ConstantTimeCompare([]byte(email), []byte(adminEmail)) == 1 {
@@ -437,8 +458,35 @@ func main() {
 	})
 	mux.HandleFunc("GET /admin/login/verify", func(w http.ResponseWriter, r *http.Request) {
 		token := strings.TrimSpace(r.URL.Query().Get("token"))
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := tmpl.ExecuteTemplate(w, "admin_login_verify.html", app.AdminLoginVerifyPageData{
+			Error:     strings.TrimSpace(r.URL.Query().Get("error")),
+			Token:     token,
+			CSRFToken: csrfToken(w, r, adminSessionSecret, adminCookieSecure),
+		}); err != nil {
+			slog.Error("render admin login verify", "error", err)
+			http.Error(w, "render failed", http.StatusInternalServerError)
+		}
+	})
+	mux.HandleFunc("POST /admin/login/verify", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
+			return
+		}
+
+		token := strings.TrimSpace(r.FormValue("token"))
 		if token == "" {
-			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			http.Redirect(w, r, "/admin/login?error="+url.QueryEscape("That sign-in link is invalid or expired"), http.StatusSeeOther)
+			return
+		}
+		if !adminVerifyLimiter.Allow(adminRateLimitKey(r, token), time.Now()) {
+			http.Redirect(w, r, "/admin/login?error="+url.QueryEscape("Too many sign-in attempts. Wait a few minutes and try again."), http.StatusSeeOther)
 			return
 		}
 
@@ -933,12 +981,71 @@ func generateLoginToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+func newLoginRateLimiter(limit int, window time.Duration) *loginRateLimiter {
+	return &loginRateLimiter{
+		window:  window,
+		limit:   limit,
+		entries: make(map[string]loginRateEntry),
+	}
+}
+
+func (l *loginRateLimiter) Allow(key string, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	for existingKey, entry := range l.entries {
+		if now.After(entry.expires) {
+			delete(l.entries, existingKey)
+		}
+	}
+
+	entry := l.entries[key]
+	if now.After(entry.expires) {
+		entry = loginRateEntry{expires: now.Add(l.window)}
+	}
+	if entry.count >= l.limit {
+		l.entries[key] = entry
+		return false
+	}
+	entry.count++
+	if entry.expires.IsZero() {
+		entry.expires = now.Add(l.window)
+	}
+	l.entries[key] = entry
+	return true
+}
+
 func adminMagicLoginURL(baseURL, token string) string {
 	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if base == "" {
 		base = "http://127.0.0.1:8094"
 	}
-	return base + "/admin/login/verify?token=" + url.QueryEscape(token)
+	return base + "/admin/login/verify#token=" + url.QueryEscape(token)
+}
+
+func adminRateLimitKey(r *http.Request, value string) string {
+	return clientIP(r) + "|" + strings.ToLower(strings.TrimSpace(value))
+}
+
+func clientIP(r *http.Request) string {
+	for _, header := range []string{"CF-Connecting-IP", "X-Forwarded-For", "X-Real-IP"} {
+		raw := strings.TrimSpace(r.Header.Get(header))
+		if raw == "" {
+			continue
+		}
+		if header == "X-Forwarded-For" {
+			raw = strings.TrimSpace(strings.Split(raw, ",")[0])
+		}
+		if raw != "" {
+			return raw
+		}
+	}
+
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err == nil && host != "" {
+		return host
+	}
+	return strings.TrimSpace(r.RemoteAddr)
 }
 
 func pakasirClientFromEnv() payment.PakasirClient {
