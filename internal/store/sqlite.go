@@ -165,7 +165,7 @@ func (s *Store) listProjectsWithLimit(ctx context.Context, activeOnly bool, limi
 			coalesce(p.deadline_date, ''),
 			p.is_active,
 			coalesce(sum(case when d.status = 'paid' and d.is_spam = 0 then d.amount else 0 end), 0) as raised,
-			coalesce(max(case when u.published_at is not null then u.published_at end), p.updated_at) as last_updated
+			max(coalesce(max(u.published_at), ''), p.updated_at) as last_updated
 		from projects p
 		left join donations d on d.project_id = p.id
 		left join project_updates u on u.project_id = p.id

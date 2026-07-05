@@ -20,7 +20,10 @@
         <p class="eyebrow">{{.Project.Status}}</p>
         <h1>{{.Project.Title}}</h1>
         <p class="lede">{{.Project.Description}}</p>
-        <p class="bio">Proyek terakhir diperbarui: {{.Project.LastUpdated}}</p>
+        <div class="project-meta-note" aria-label="Pembaruan proyek">
+          <span>Proyek terakhir diperbarui</span>
+          <strong>{{.Project.LastUpdated}}</strong>
+        </div>
         {{if or .Project.RepoURL .Project.DemoURL}}
           <div class="project-links">
             {{if .Project.RepoURL}}

@@ -314,6 +314,27 @@
   margin-top: 20px;
 }
 
+.project-meta-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 24px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  background: #f4f4ef;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+
+.project-meta-note span {
+  font-size: 13px;
+}
+
+.project-meta-note strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
 .funding-panel,
 .donation-form,
 .thanks-panel,
