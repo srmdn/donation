@@ -69,6 +69,7 @@ type PageData struct {
 	Timeline          []TimelineEvent
 	TimelineHasMore   bool
 	TimelineNextLimit int
+	CSRFToken         string
 }
 
 type ProjectPageData struct {
@@ -89,7 +90,10 @@ type ProjectsIndexPageData struct {
 }
 
 type AdminLoginPageData struct {
-	Error string
+	Error     string
+	Notice    string
+	Email     string
+	CSRFToken string
 }
 
 type AdminProjectsPageData struct {
@@ -99,6 +103,7 @@ type AdminProjectsPageData struct {
 	Error       string
 	Notice      string
 	ActiveCount int
+	CSRFToken   string
 }
 
 type AdminDonationsPageData struct {
@@ -110,6 +115,7 @@ type AdminDonationsPageData struct {
 	PendingCount int
 	PublicCount  int
 	SpamCount    int
+	CSRFToken    string
 }
 
 type PayPageData struct {

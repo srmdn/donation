@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -626,6 +628,63 @@ func (s *Store) UpdateProject(ctx context.Context, project app.Project) error {
 	return nil
 }
 
+var ErrInvalidAdminLoginToken = errors.New("invalid admin login token")
+
+func ErrInvalidAdminLoginTokenError() error {
+	return ErrInvalidAdminLoginToken
+}
+
+func (s *Store) CreateAdminLoginToken(ctx context.Context, email, token string, expiresAt time.Time) error {
+	_, err := s.db.ExecContext(ctx, `
+		insert into admin_login_tokens (email, token_hash, expires_at, created_at)
+		values (?, ?, ?, datetime('now'))
+	`, email, hashLoginToken(token), expiresAt.Format("2006-01-02 15:04:05"))
+	return err
+}
+
+func (s *Store) ConsumeAdminLoginToken(ctx context.Context, token string, now time.Time) (string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	var tokenID int64
+	var email string
+	err = tx.QueryRowContext(ctx, `
+		select id, email
+		from admin_login_tokens
+		where token_hash = ? and used_at is null and expires_at > ?
+	`, hashLoginToken(token), now.Format("2006-01-02 15:04:05")).Scan(&tokenID, &email)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrInvalidAdminLoginToken
+	}
+	if err != nil {
+		return "", err
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		update admin_login_tokens
+		set used_at = ?
+		where id = ? and used_at is null
+	`, now.Format("2006-01-02 15:04:05"), tokenID)
+	if err != nil {
+		return "", err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return "", err
+	}
+	if rows != 1 {
+		return "", ErrInvalidAdminLoginToken
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return email, nil
+}
+
 func (s *Store) migrate(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `
 		create table if not exists projects (
@@ -679,6 +738,15 @@ func (s *Store) migrate(ctx context.Context) error {
 			published_at text not null,
 			created_at text not null,
 			updated_at text not null
+		);
+
+		create table if not exists admin_login_tokens (
+			id integer primary key autoincrement,
+			email text not null,
+			token_hash text not null unique,
+			expires_at text not null,
+			used_at text,
+			created_at text not null
 		);
 
 	`)
@@ -847,4 +915,9 @@ func nullIfEmpty(value string) any {
 		return nil
 	}
 	return value
+}
+
+func hashLoginToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }

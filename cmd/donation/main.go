@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
@@ -21,6 +23,8 @@ import (
 	"time"
 
 	"github.com/srmdn/donation/internal/app"
+	"github.com/srmdn/donation/internal/csrf"
+	"github.com/srmdn/donation/internal/mailer"
 	"github.com/srmdn/donation/internal/payment"
 	"github.com/srmdn/donation/internal/store"
 )
@@ -31,13 +35,22 @@ var assets embed.FS
 const minDonationAmount = 25000
 
 func main() {
+	loadDotenv(".env")
+
 	addr := env("ADDR", "127.0.0.1:8094")
 	dbPath := env("DB_PATH", "data/donation.db")
 	publicBaseURL := env("PUBLIC_BASE_URL", "")
-	adminPassword := env("ADMIN_PASSWORD", "admin")
-	adminSessionSecret := env("ADMIN_SESSION_SECRET", adminPassword)
+	adminEmail := strings.TrimSpace(strings.ToLower(env("ADMIN_EMAIL", "")))
+	adminSessionSecret := env("ADMIN_SESSION_SECRET", "change-me")
 	adminCookieSecure := strings.HasPrefix(strings.ToLower(publicBaseURL), "https://")
 	paymentMode := env("PAYMENT_MODE", "mock")
+	adminMailer := mailer.New(
+		env("SMTP_HOST", ""),
+		envInt("SMTP_PORT", 587),
+		env("SMTP_USERNAME", ""),
+		env("SMTP_PASSWORD", ""),
+		env("MAIL_FROM", ""),
+	)
 	staticFS := mustSubFS(assets, "web/static")
 	db, err := store.Open(dbPath)
 	if err != nil {
@@ -135,6 +148,7 @@ func main() {
 		data.Timeline = timeline
 		data.TimelineHasMore = hasMore
 		data.TimelineNextLimit = projectTimelineLimit + 5
+		data.CSRFToken = csrfToken(w, r, adminSessionSecret, adminCookieSecure)
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, "project.html", app.ProjectPageData{
@@ -148,6 +162,10 @@ func main() {
 	mux.HandleFunc("POST /donations", func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
 			return
 		}
 
@@ -365,7 +383,10 @@ func main() {
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, "admin_login.html", app.AdminLoginPageData{
-			Error: strings.TrimSpace(r.URL.Query().Get("error")),
+			Error:     strings.TrimSpace(r.URL.Query().Get("error")),
+			Notice:    strings.TrimSpace(r.URL.Query().Get("notice")),
+			Email:     strings.TrimSpace(r.URL.Query().Get("email")),
+			CSRFToken: csrfToken(w, r, adminSessionSecret, adminCookieSecure),
 		}); err != nil {
 			slog.Error("render admin login", "error", err)
 			http.Error(w, "render failed", http.StatusInternalServerError)
@@ -376,10 +397,63 @@ func main() {
 			http.Error(w, "invalid form", http.StatusBadRequest)
 			return
 		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
+			return
+		}
 
-		password := strings.TrimSpace(r.FormValue("password"))
-		if subtle.ConstantTimeCompare([]byte(password), []byte(adminPassword)) != 1 {
-			http.Redirect(w, r, "/admin/login?error="+url.QueryEscape("Wrong password"), http.StatusSeeOther)
+		email := strings.TrimSpace(strings.ToLower(r.FormValue("email")))
+		if email == "" {
+			http.Redirect(w, r, "/admin/login?error="+url.QueryEscape("Email is required"), http.StatusSeeOther)
+			return
+		}
+		if adminEmail == "" {
+			http.Redirect(w, r, "/admin/login?error="+url.QueryEscape("Admin email is not configured"), http.StatusSeeOther)
+			return
+		}
+
+		notice := "If that email can access admin, a sign-in link is ready."
+		if subtle.ConstantTimeCompare([]byte(email), []byte(adminEmail)) == 1 {
+			token, err := generateLoginToken()
+			if err != nil {
+				slog.Error("generate admin login token", "error", err)
+				http.Error(w, "login failed", http.StatusInternalServerError)
+				return
+			}
+			expiresAt := time.Now().Add(15 * time.Minute)
+			if err := db.CreateAdminLoginToken(r.Context(), email, token, expiresAt); err != nil {
+				slog.Error("store admin login token", "error", err)
+				http.Error(w, "login failed", http.StatusInternalServerError)
+				return
+			}
+			if err := adminMailer.SendMagicLink(email, adminMagicLoginURL(publicBaseURL, token)); err != nil {
+				slog.Error("send admin magic link", "error", err)
+				http.Error(w, "login failed", http.StatusInternalServerError)
+				return
+			}
+		}
+
+		http.Redirect(w, r, "/admin/login?notice="+url.QueryEscape(notice)+"&email="+url.QueryEscape(email), http.StatusSeeOther)
+	})
+	mux.HandleFunc("GET /admin/login/verify", func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimSpace(r.URL.Query().Get("token"))
+		if token == "" {
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+
+		email, err := db.ConsumeAdminLoginToken(r.Context(), token, time.Now())
+		if errors.Is(err, store.ErrInvalidAdminLoginTokenError()) {
+			http.Redirect(w, r, "/admin/login?error="+url.QueryEscape("That sign-in link is invalid or expired"), http.StatusSeeOther)
+			return
+		}
+		if err != nil {
+			slog.Error("consume admin login token", "error", err)
+			http.Error(w, "login failed", http.StatusInternalServerError)
+			return
+		}
+		if adminEmail == "" || subtle.ConstantTimeCompare([]byte(strings.ToLower(email)), []byte(adminEmail)) != 1 {
+			http.Redirect(w, r, "/admin/login?error="+url.QueryEscape("That sign-in link is invalid or expired"), http.StatusSeeOther)
 			return
 		}
 
@@ -387,6 +461,14 @@ func main() {
 		http.Redirect(w, r, "/admin/projects?notice="+url.QueryEscape("Signed in"), http.StatusSeeOther)
 	})
 	mux.HandleFunc("POST /admin/logout", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
+			return
+		}
 		clearAdminCookie(w, adminCookieSecure)
 		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 	})
@@ -404,9 +486,10 @@ func main() {
 		}
 
 		page := app.AdminProjectsPageData{
-			Projects: projects,
-			Error:    strings.TrimSpace(r.URL.Query().Get("error")),
-			Notice:   strings.TrimSpace(r.URL.Query().Get("notice")),
+			Projects:  projects,
+			Error:     strings.TrimSpace(r.URL.Query().Get("error")),
+			Notice:    strings.TrimSpace(r.URL.Query().Get("notice")),
+			CSRFToken: csrfToken(w, r, adminSessionSecret, adminCookieSecure),
 		}
 		for _, project := range projects {
 			if project.IsActive {
@@ -449,6 +532,7 @@ func main() {
 			Donations: donations,
 			Error:     strings.TrimSpace(r.URL.Query().Get("error")),
 			Notice:    strings.TrimSpace(r.URL.Query().Get("notice")),
+			CSRFToken: csrfToken(w, r, adminSessionSecret, adminCookieSecure),
 		}
 		for _, donation := range donations {
 			page.TotalCount++
@@ -477,6 +561,14 @@ func main() {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 			return
 		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
+			return
+		}
 
 		project, err := projectFromRequest(r)
 		if err != nil {
@@ -493,6 +585,14 @@ func main() {
 	mux.HandleFunc("POST /admin/projects/{id}", func(w http.ResponseWriter, r *http.Request) {
 		if !isAdmin(r, adminSessionSecret) {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
 			return
 		}
 
@@ -528,6 +628,10 @@ func main() {
 		}
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
 			return
 		}
 
@@ -585,6 +689,46 @@ func mustSubFS(root fs.FS, dir string) fs.FS {
 func env(key, fallback string) string {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func loadDotenv(path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		idx := strings.Index(line, "=")
+		if idx == -1 {
+			continue
+		}
+		key := strings.TrimSpace(line[:idx])
+		val := strings.TrimSpace(line[idx+1:])
+		if len(val) >= 2 && (val[0] == '"' || val[0] == '\'') && val[0] == val[len(val)-1] {
+			val = val[1 : len(val)-1]
+		}
+		if _, exists := os.LookupEnv(key); !exists {
+			_ = os.Setenv(key, val)
+		}
+	}
+}
+
+func envInt(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
 		return fallback
 	}
 	return value
@@ -762,6 +906,39 @@ func adminCookieValue(secret string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte("admin-session"))
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func csrfToken(w http.ResponseWriter, r *http.Request, secret string, secure bool) string {
+	if cookie, err := r.Cookie(csrf.CookieName); err == nil && csrf.Validate(cookie.Value, cookie.Value, secret) {
+		return cookie.Value
+	}
+	token := csrf.NewToken(secret)
+	http.SetCookie(w, csrf.Cookie(token, secure))
+	return token
+}
+
+func requireCSRF(r *http.Request, secret string) bool {
+	cookie, err := r.Cookie(csrf.CookieName)
+	if err != nil {
+		return false
+	}
+	return csrf.Validate(cookie.Value, r.FormValue(csrf.FormField), secret)
+}
+
+func generateLoginToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+func adminMagicLoginURL(baseURL, token string) string {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if base == "" {
+		base = "http://127.0.0.1:8094"
+	}
+	return base + "/admin/login/verify?token=" + url.QueryEscape(token)
 }
 
 func pakasirClientFromEnv() payment.PakasirClient {

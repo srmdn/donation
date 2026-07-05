@@ -12,7 +12,7 @@ Visitors can choose which project to support, see funding progress, and follow a
 - Project detail page with donation form
 - SQLite-backed seed data
 - Mock payment flow for local development
-- Planned Pakasir QRIS integration for production payments
+- Pakasir QRIS integration for production payments
 
 ## Stack
 
@@ -54,11 +54,22 @@ For Pakasir return links:
 PUBLIC_BASE_URL=http://127.0.0.1:8094
 ```
 
-Admin defaults:
+Admin auth:
 
 ```txt
-ADMIN_PASSWORD=admin
+ADMIN_EMAIL=you@example.com
 ADMIN_SESSION_SECRET=change-me
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USERNAME=
+SMTP_PASSWORD=
+MAIL_FROM=
+```
+
+Generate a session secret:
+
+```sh
+python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
 
 Pakasir placeholders:
@@ -89,6 +100,14 @@ Production payment flow is planned around Pakasir:
 - receive payment webhook at `/api/webhooks/pakasir`
 - verify transaction status with Pakasir transaction detail API
 - mark donation as paid only after verification
+
+## Admin Login
+
+Admin access now uses an email magic link.
+
+- `ADMIN_EMAIL` controls who can request the link
+- the sign-in token is one-time and expires after 15 minutes
+- if SMTP is not configured in local development, the sign-in link is written to the app log
 
 ## Donation Amounts
 

@@ -45,6 +45,7 @@
 
     <section class="donation-layout">
       <form class="donation-form" method="post" action="/donations">
+        <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
         <input type="hidden" name="project_slug" value="{{.Project.Slug}}">
 
         <div class="form-heading">

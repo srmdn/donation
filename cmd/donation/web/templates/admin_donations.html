@@ -25,6 +25,7 @@
           <span>{{.SpamCount}} spam</span>
         </div>
         <form method="post" action="/admin/logout">
+          <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
           <button class="secondary-button" type="submit">Sign out</button>
         </form>
       </div>
@@ -79,15 +80,18 @@
             <div class="admin-row-actions">
               {{if and (eq .Provider "pakasir") .ProviderOrderID}}
                 <form method="post" action="/admin/donations/{{.ID}}">
+                  <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
                   <input type="hidden" name="action" value="refresh_status">
                   <button class="ghost-link button-link" type="submit">Refresh</button>
                 </form>
               {{end}}
               <form method="post" action="/admin/donations/{{.ID}}">
+                <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
                 <input type="hidden" name="action" value="{{if eq .Visibility "public"}}hide_public{{else}}show_public{{end}}">
                 <button class="ghost-link button-link" type="submit">{{if eq .Visibility "public"}}Hide{{else}}Show{{end}}</button>
               </form>
               <form method="post" action="/admin/donations/{{.ID}}">
+                <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
                 <input type="hidden" name="action" value="{{if .IsSpam}}unmark_spam{{else}}mark_spam{{end}}">
                 <button class="ghost-link button-link" type="submit">{{if .IsSpam}}Unspam{{else}}Spam{{end}}</button>
               </form>
