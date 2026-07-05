@@ -106,6 +106,7 @@ func main() {
 			http.Error(w, "data load failed", http.StatusInternalServerError)
 			return
 		}
+		data.Meta = homeMeta(publicBaseURL, r, data)
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
@@ -145,6 +146,7 @@ func main() {
 			PrevPage:      page - 1,
 			NextPage:      page + 1,
 			TotalProjects: totalProjects,
+			Meta:          projectsMeta(publicBaseURL, r, totalProjects),
 		}); err != nil {
 			slog.Error("render projects index", "error", err)
 			http.Error(w, "render failed", http.StatusInternalServerError)
@@ -180,6 +182,7 @@ func main() {
 		data.TimelineHasMore = hasMore
 		data.TimelineNextLimit = projectTimelineLimit + 5
 		data.CSRFToken = csrfToken(w, r, adminSessionSecret, adminCookieSecure)
+		data.Meta = projectMeta(publicBaseURL, r, data.Builder, project)
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, "project.html", app.ProjectPageData{
@@ -1493,6 +1496,83 @@ func isLocalPublicBaseURL(baseURL string) bool {
 	}
 	host := strings.ToLower(parsed.Hostname())
 	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
+func homeMeta(publicBaseURL string, r *http.Request, data app.PageData) app.MetaData {
+	baseURL := canonicalBaseURL(publicBaseURL, r)
+	return app.MetaData{
+		Title:        data.Builder.Name + " - dukung proyek independen",
+		Description:  "Pilih proyek yang ingin didukung, pantau progres donasi, dan ikuti pembaruan build secara terbuka.",
+		CanonicalURL: absoluteURL(baseURL, "/"),
+		ImageURL:     absoluteURL(baseURL, "/static/og-default.png"),
+		SiteName:     "donate.srmdn.com",
+		Type:         "website",
+	}
+}
+
+func projectsMeta(publicBaseURL string, r *http.Request, totalProjects int) app.MetaData {
+	baseURL := canonicalBaseURL(publicBaseURL, r)
+	description := "Daftar proyek aktif yang bisa didukung, lengkap dengan progres pendanaan dan pembaruan terbaru."
+	if totalProjects > 0 {
+		description = strconv.Itoa(totalProjects) + " proyek aktif siap didukung, lengkap dengan progres pendanaan dan pembaruan terbaru."
+	}
+	return app.MetaData{
+		Title:        "Semua proyek - donate.srmdn.com",
+		Description:  description,
+		CanonicalURL: absoluteURL(baseURL, "/projects"),
+		ImageURL:     absoluteURL(baseURL, "/static/og-default.png"),
+		SiteName:     "donate.srmdn.com",
+		Type:         "website",
+	}
+}
+
+func projectMeta(publicBaseURL string, r *http.Request, builder app.Builder, project app.Project) app.MetaData {
+	baseURL := canonicalBaseURL(publicBaseURL, r)
+	description := strings.TrimSpace(project.Summary)
+	if description == "" {
+		description = strings.TrimSpace(project.Description)
+	}
+	if description == "" {
+		description = "Dukung proyek ini dan ikuti pembaruan perkembangannya."
+	}
+	return app.MetaData{
+		Title:        project.Title + " - dukung " + builder.Name,
+		Description:  description,
+		CanonicalURL: absoluteURL(baseURL, "/projects/"+project.Slug),
+		ImageURL:     absoluteURL(baseURL, "/static/og-default.png"),
+		SiteName:     "donate.srmdn.com",
+		Type:         "website",
+	}
+}
+
+func canonicalBaseURL(publicBaseURL string, r *http.Request) string {
+	baseURL := strings.TrimRight(strings.TrimSpace(publicBaseURL), "/")
+	if baseURL != "" {
+		return baseURL
+	}
+
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwarded != "" {
+		scheme = strings.ToLower(strings.Split(forwarded, ",")[0])
+	}
+	return scheme + "://" + r.Host
+}
+
+func absoluteURL(baseURL, path string) string {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		return path
+	}
+	if path == "" {
+		return baseURL
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return baseURL + path
 }
 
 func invalidAdminSessionSecret(secret string) bool {

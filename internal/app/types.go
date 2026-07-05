@@ -74,6 +74,15 @@ type Builder struct {
 	Bio    string
 }
 
+type MetaData struct {
+	Title        string
+	Description  string
+	CanonicalURL string
+	ImageURL     string
+	SiteName     string
+	Type         string
+}
+
 type PageData struct {
 	Builder           Builder
 	TotalRaised       int
@@ -84,6 +93,7 @@ type PageData struct {
 	TimelineHasMore   bool
 	TimelineNextLimit int
 	CSRFToken         string
+	Meta              MetaData
 }
 
 type ProjectPageData struct {
@@ -101,6 +111,7 @@ type ProjectsIndexPageData struct {
 	NextPage       int
 	TotalProjects  int
 	SupporterCount int
+	Meta           MetaData
 }
 
 type AdminLoginPageData struct {

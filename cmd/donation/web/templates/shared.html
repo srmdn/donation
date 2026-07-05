@@ -21,3 +21,19 @@
     </div>
   </footer>
 {{end}}
+
+{{define "meta_tags"}}
+  <title>{{.Meta.Title}}</title>
+  <meta name="description" content="{{.Meta.Description}}">
+  <link rel="canonical" href="{{.Meta.CanonicalURL}}">
+  <meta property="og:site_name" content="{{.Meta.SiteName}}">
+  <meta property="og:type" content="{{.Meta.Type}}">
+  <meta property="og:title" content="{{.Meta.Title}}">
+  <meta property="og:description" content="{{.Meta.Description}}">
+  <meta property="og:url" content="{{.Meta.CanonicalURL}}">
+  <meta property="og:image" content="{{.Meta.ImageURL}}">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{.Meta.Title}}">
+  <meta name="twitter:description" content="{{.Meta.Description}}">
+  <meta name="twitter:image" content="{{.Meta.ImageURL}}">
+{{end}}
