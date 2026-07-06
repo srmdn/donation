@@ -195,6 +195,7 @@ func main() {
 		funcMap: template.FuncMap{
 			"rupiah":         rupiah,
 			"percent":        percent,
+			"progressMax":    progressMax,
 			"paragraphs":     descriptionParagraphs,
 			"eventHasAmount": eventHasAmount,
 			"assetPath":      assetPath,
@@ -580,6 +581,9 @@ func main() {
 		}
 		http.Redirect(w, r, "/admin/projects", http.StatusSeeOther)
 	})
+	mux.HandleFunc("GET /admin/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin", http.StatusMovedPermanently)
+	})
 	mux.HandleFunc("GET /admin/login", func(w http.ResponseWriter, r *http.Request) {
 		if isAdmin(r.Context(), r, db) {
 			http.Redirect(w, r, "/admin/projects", http.StatusSeeOther)
@@ -597,6 +601,9 @@ func main() {
 			slog.Error("render admin login", "error", err)
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}
+	})
+	mux.HandleFunc("GET /admin/login/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin/login", http.StatusMovedPermanently)
 	})
 	mux.HandleFunc("POST /admin/login", func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
@@ -663,6 +670,13 @@ func main() {
 			slog.Error("render admin login verify", "error", err)
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}
+	})
+	mux.HandleFunc("GET /admin/login/verify/", func(w http.ResponseWriter, r *http.Request) {
+		target := "/admin/login/verify"
+		if raw := strings.TrimSpace(r.URL.RawQuery); raw != "" {
+			target += "?" + raw
+		}
+		http.Redirect(w, r, target, http.StatusMovedPermanently)
 	})
 	mux.HandleFunc("POST /admin/login/verify", func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
@@ -1131,7 +1145,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           logRequests(mux),
+		Handler:           securityHeaders(logRequests(mux)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -1206,6 +1220,31 @@ func logRequests(next http.Handler) http.Handler {
 	})
 }
 
+func securityHeaders(next http.Handler) http.Handler {
+	csp := strings.Join([]string{
+		"default-src 'self'",
+		"base-uri 'self'",
+		"form-action 'self'",
+		"frame-ancestors 'none'",
+		"img-src 'self' https: data:",
+		"style-src 'self'",
+		"script-src 'self'",
+		"connect-src 'self'",
+		"object-src 'none'",
+	}, "; ")
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		headers := w.Header()
+		headers.Set("Content-Security-Policy", csp)
+		headers.Set("X-Frame-Options", "DENY")
+		headers.Set("X-Content-Type-Options", "nosniff")
+		headers.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		headers.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		headers.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
+		next.ServeHTTP(w, r)
+	})
+}
+
 func rupiah(amount int) string {
 	if amount == 0 {
 		return "Rp 0"
@@ -1229,6 +1268,13 @@ func percent(raised, goal int) int {
 		return 100
 	}
 	return p
+}
+
+func progressMax(goal int) int {
+	if goal <= 0 {
+		return 1
+	}
+	return goal
 }
 
 func eventHasAmount(amount int) bool {
@@ -1464,7 +1510,7 @@ func adminMagicLoginURL(baseURL, token string) string {
 	if base == "" {
 		base = defaultLocalBaseURL
 	}
-	return base + "/admin/login/verify#token=" + url.QueryEscape(token)
+	return base + "/admin/login/verify?token=" + url.QueryEscape(token)
 }
 
 func adminRateLimitKey(r *http.Request, value string) string {

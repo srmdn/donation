@@ -31,9 +31,7 @@
           </div>
           <h3>{{.Title}}</h3>
           <p>{{.Summary}}</p>
-          <div class="meter" aria-label="{{.Title}} funding progress">
-            <span style="width: {{percent .Raised .Goal}}%"></span>
-          </div>
+          <progress class="meter" aria-label="{{.Title}} funding progress" value="{{.Raised}}" max="{{progressMax .Goal}}">{{percent .Raised .Goal}}%</progress>
           <div class="project-money">
             <strong>{{rupiah .Raised}}</strong>
             <span>of {{rupiah .Goal}}</span>
