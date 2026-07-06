@@ -41,6 +41,8 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center 24%;
+  background: #e8e7df;
 }
 
 .avatar.compact {
