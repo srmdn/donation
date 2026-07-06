@@ -11,7 +11,7 @@
   {{template "site_nav" .}}
   <main class="detail-shell">
     <nav class="top-nav" aria-label="Breadcrumb">
-      <a href="/">Kembali ke proyek</a>
+      <a href="/">Back to Home</a>
       <span>@{{.Builder.Handle}}</span>
     </nav>
 
@@ -19,21 +19,7 @@
       <div>
         <p class="eyebrow">{{.Project.Status}}</p>
         <h1>{{.Project.Title}}</h1>
-        <p class="lede">{{.Project.Description}}</p>
-        <div class="project-meta-note" aria-label="Pembaruan proyek">
-          <span>Proyek terakhir diperbarui</span>
-          <strong>{{.Project.LastUpdated}}</strong>
-        </div>
-        {{if or .Project.RepoURL .Project.DemoURL}}
-          <div class="project-links">
-            {{if .Project.RepoURL}}
-              <a class="ghost-link" href="{{.Project.RepoURL}}" target="_blank" rel="noreferrer">Repository</a>
-            {{end}}
-            {{if .Project.DemoURL}}
-              <a class="ghost-link" href="{{.Project.DemoURL}}" target="_blank" rel="noreferrer">Live demo</a>
-            {{end}}
-          </div>
-        {{end}}
+        <p class="lede">{{.Project.Summary}}</p>
       </div>
 
       <aside class="funding-panel" aria-label="Progress pendanaan">
@@ -48,6 +34,36 @@
           <p class="deadline-note {{if .Project.DeadlineEnded}}ended{{end}}">{{.Project.DeadlineText}}</p>
         {{end}}
       </aside>
+    </section>
+
+    <section class="project-story" aria-label="Tentang proyek">
+      <div class="story-head">
+        <div>
+          <p class="eyebrow">Detail</p>
+          <h2>Konteks proyek</h2>
+        </div>
+        <div class="project-meta-note" aria-label="Pembaruan proyek">
+          <span>Proyek terakhir diperbarui</span>
+          <strong>{{.Project.LastUpdated}}</strong>
+        </div>
+      </div>
+
+      <div class="story-body">
+        {{range paragraphs .Project.Description}}
+          <p>{{.}}</p>
+        {{end}}
+      </div>
+
+      {{if or .Project.RepoURL .Project.DemoURL}}
+        <div class="project-links">
+          {{if .Project.RepoURL}}
+            <a class="ghost-link" href="{{.Project.RepoURL}}" target="_blank" rel="noreferrer">Repository</a>
+          {{end}}
+          {{if .Project.DemoURL}}
+            <a class="ghost-link" href="{{.Project.DemoURL}}" target="_blank" rel="noreferrer">Live demo</a>
+          {{end}}
+        </div>
+      {{end}}
     </section>
 
     <section class="donation-layout">

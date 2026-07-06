@@ -39,6 +39,14 @@ const defaultLocalBaseURL = "http://" + defaultLocalAddr
 
 var staticAssetVersion = map[string]string{}
 
+type templateRenderer struct {
+	dev          bool
+	templateFS   fs.FS
+	templateGlob string
+	funcMap      template.FuncMap
+	compiled     *template.Template
+}
+
 type loginRateLimiter struct {
 	mu      sync.Mutex
 	window  time.Duration
@@ -88,6 +96,47 @@ func staticAssetPath(name string) string {
 	return "/static/" + name
 }
 
+func assetFS(devMode bool) (fs.FS, fs.FS, string) {
+	if devMode {
+		webFS := mustSubFS(os.DirFS("."), "cmd/donation/web")
+		return webFS, mustSubFS(webFS, "static"), "templates/*.html"
+	}
+	return assets, mustSubFS(assets, "web/static"), "web/templates/*.html"
+}
+
+func mustTemplateRenderer(renderer templateRenderer) *templateRenderer {
+	if renderer.dev {
+		return &renderer
+	}
+	renderer.compiled = renderer.parse()
+	return &renderer
+}
+
+func (renderer *templateRenderer) parse() *template.Template {
+	tmpl, err := template.New("index.html").Funcs(renderer.funcMap).ParseFS(renderer.templateFS, renderer.templateGlob)
+	if err != nil {
+		panic(err)
+	}
+	return tmpl
+}
+
+func (renderer *templateRenderer) ExecuteTemplate(w io.Writer, name string, data any) error {
+	if renderer.dev {
+		return renderer.parse().ExecuteTemplate(w, name, data)
+	}
+	return renderer.compiled.ExecuteTemplate(w, name, data)
+}
+
+func noCacheInDev(devMode bool, next http.Handler) http.Handler {
+	if !devMode {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
+}
+
 func main() {
 	loadDotenv(".env")
 
@@ -124,8 +173,14 @@ func main() {
 	adminLoginLimiter := newLoginRateLimiter(5, 15*time.Minute)
 	adminVerifyLimiter := newLoginRateLimiter(10, 15*time.Minute)
 	webhookLimiter := newLoginRateLimiter(60, time.Minute)
-	staticFS := mustSubFS(assets, "web/static")
-	assetDigests := mustStaticAssetDigests(staticFS)
+	devMode := isDevelopmentEnv(appEnv)
+	templateFS, staticFS, templateGlob := assetFS(devMode)
+	assetPath := func(name string) string { return "/static/" + name }
+	if !devMode {
+		assetPath = staticAssetPathFunc(mustStaticAssetDigests(staticFS))
+	} else {
+		staticAssetVersion = map[string]string{}
+	}
 	db, err := store.Open(dbPath)
 	if err != nil {
 		slog.Error("open store", "error", err, "path", dbPath)
@@ -133,15 +188,21 @@ func main() {
 	}
 	defer db.Close()
 
-	tmpl := template.Must(template.New("index.html").Funcs(template.FuncMap{
-		"rupiah":         rupiah,
-		"percent":        percent,
-		"eventHasAmount": eventHasAmount,
-		"assetPath":      staticAssetPathFunc(assetDigests),
-	}).ParseFS(assets, "web/templates/*.html"))
+	renderer := mustTemplateRenderer(templateRenderer{
+		dev:          devMode,
+		templateFS:   templateFS,
+		templateGlob: templateGlob,
+		funcMap: template.FuncMap{
+			"rupiah":         rupiah,
+			"percent":        percent,
+			"paragraphs":     descriptionParagraphs,
+			"eventHasAmount": eventHasAmount,
+			"assetPath":      assetPath,
+		},
+	})
 
 	mux := http.NewServeMux()
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS)))
+	mux.Handle("GET /static/", noCacheInDev(devMode, http.StripPrefix("/static/", http.FileServerFS(staticFS))))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		timelineLimit := timelineLimitFromRequest(r, 6)
 		data, err := db.PageDataWithTimelineLimit(r.Context(), timelineLimit)
@@ -153,7 +214,7 @@ func main() {
 		data.Meta = homeMeta(publicBaseURL, r, data)
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
+		if err := renderer.ExecuteTemplate(w, "index.html", data); err != nil {
 			slog.Error("render index", "error", err)
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}
@@ -177,7 +238,7 @@ func main() {
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := tmpl.ExecuteTemplate(w, "projects.html", app.ProjectsIndexPageData{
+		if err := renderer.ExecuteTemplate(w, "projects.html", app.ProjectsIndexPageData{
 			Builder:       app.DefaultBuilder(),
 			Projects:      projects,
 			Page:          page,
@@ -225,7 +286,7 @@ func main() {
 		data.Meta = projectMeta(publicBaseURL, r, data.Builder, project)
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := tmpl.ExecuteTemplate(w, "project.html", app.ProjectPageData{
+		if err := renderer.ExecuteTemplate(w, "project.html", app.ProjectPageData{
 			PageData: data,
 			Project:  project,
 		}); err != nil {
@@ -358,7 +419,7 @@ func main() {
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := tmpl.ExecuteTemplate(w, "pay.html", app.PayPageData{
+		if err := renderer.ExecuteTemplate(w, "pay.html", app.PayPageData{
 			Builder:   app.DefaultBuilder(),
 			Donation:  donation,
 			CSRFToken: csrfToken(w, r, adminSessionSecret, adminCookieSecure),
@@ -437,7 +498,7 @@ func main() {
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := tmpl.ExecuteTemplate(w, "thanks.html", page); err != nil {
+		if err := renderer.ExecuteTemplate(w, "thanks.html", page); err != nil {
 			slog.Error("render thanks", "error", err)
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}
@@ -527,7 +588,7 @@ func main() {
 
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := tmpl.ExecuteTemplate(w, "admin_login.html", app.AdminLoginPageData{
+		if err := renderer.ExecuteTemplate(w, "admin_login.html", app.AdminLoginPageData{
 			Error:     strings.TrimSpace(r.URL.Query().Get("error")),
 			Notice:    strings.TrimSpace(r.URL.Query().Get("notice")),
 			Email:     strings.TrimSpace(r.URL.Query().Get("email")),
@@ -594,7 +655,7 @@ func main() {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := tmpl.ExecuteTemplate(w, "admin_login_verify.html", app.AdminLoginVerifyPageData{
+		if err := renderer.ExecuteTemplate(w, "admin_login_verify.html", app.AdminLoginVerifyPageData{
 			Error:     strings.TrimSpace(r.URL.Query().Get("error")),
 			Token:     token,
 			CSRFToken: csrfToken(w, r, adminSessionSecret, adminCookieSecure),
@@ -709,7 +770,7 @@ func main() {
 			}
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := tmpl.ExecuteTemplate(w, "admin_projects.html", page); err != nil {
+		if err := renderer.ExecuteTemplate(w, "admin_projects.html", page); err != nil {
 			slog.Error("render admin projects", "error", err)
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}
@@ -754,7 +815,7 @@ func main() {
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := tmpl.ExecuteTemplate(w, "admin_updates.html", page); err != nil {
+		if err := renderer.ExecuteTemplate(w, "admin_updates.html", page); err != nil {
 			slog.Error("render admin updates", "error", err)
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}
@@ -820,7 +881,7 @@ func main() {
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := tmpl.ExecuteTemplate(w, "admin_donations.html", page); err != nil {
+		if err := renderer.ExecuteTemplate(w, "admin_donations.html", page); err != nil {
 			slog.Error("render admin donations", "error", err)
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}
@@ -1172,6 +1233,25 @@ func percent(raised, goal int) int {
 
 func eventHasAmount(amount int) bool {
 	return amount > 0
+}
+
+func descriptionParagraphs(text string) []string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+
+	rawParagraphs := strings.Split(text, "\n\n")
+	paragraphs := make([]string, 0, len(rawParagraphs))
+	for _, paragraph := range rawParagraphs {
+		paragraph = strings.TrimSpace(paragraph)
+		if paragraph == "" {
+			continue
+		}
+		paragraphs = append(paragraphs, paragraph)
+	}
+	return paragraphs
 }
 
 func pakasirOrderID(id int64) string {
