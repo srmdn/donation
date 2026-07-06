@@ -26,9 +26,7 @@
         <span class="panel-label">Progress pendanaan</span>
         <strong>{{rupiah .Project.Raised}}</strong>
         <span>dari {{rupiah .Project.Goal}}</span>
-        <div class="meter">
-          <span style="width: {{percent .Project.Raised .Project.Goal}}%"></span>
-        </div>
+        <progress class="meter" aria-label="Progress pendanaan proyek" value="{{.Project.Raised}}" max="{{progressMax .Project.Goal}}">{{percent .Project.Raised .Project.Goal}}%</progress>
         <p>{{percent .Project.Raised .Project.Goal}} persen tercapai.</p>
         {{if .Project.DeadlineText}}
           <p class="deadline-note {{if .Project.DeadlineEnded}}ended{{end}}">{{.Project.DeadlineText}}</p>

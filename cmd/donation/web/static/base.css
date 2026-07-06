@@ -62,6 +62,9 @@ h3 {
 }
 
 .site-header {
+  position: sticky;
+  top: 0;
+  z-index: 40;
   border-bottom: 1px solid rgba(222, 222, 215, 0.8);
   background: rgba(247, 247, 244, 0.9);
   backdrop-filter: blur(8px);
