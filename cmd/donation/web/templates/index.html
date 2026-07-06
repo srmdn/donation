@@ -3,14 +3,20 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{.Builder.Name}} - project support</title>
+  {{template "meta_tags" .}}
   <link rel="stylesheet" href="/static/base.css">
   <link rel="stylesheet" href="/static/public.css">
 </head>
 <body>
   {{template "site_nav" .}}
   <div class="mobile-sticky-bar" aria-label="Quick support">
-    <div class="avatar compact" aria-hidden="true">SR</div>
+    <div class="avatar compact">
+      {{if .Builder.AvatarURL}}
+        <img src="{{.Builder.AvatarURL}}" alt="{{.Builder.Name}}">
+      {{else}}
+        <span aria-hidden="true">SR</span>
+      {{end}}
+    </div>
     <div class="mobile-sticky-copy">
       <strong>{{.Builder.Name}}</strong>
       <span>{{rupiah .TotalRaised}} raised</span>
@@ -20,10 +26,30 @@
 
   <main class="shell">
     <aside class="profile" aria-label="Builder profile">
-      <div class="avatar" aria-hidden="true">SR</div>
+      <div class="avatar">
+        {{if .Builder.AvatarURL}}
+          <img src="{{.Builder.AvatarURL}}" alt="{{.Builder.Name}}">
+        {{else}}
+          <span aria-hidden="true">SR</span>
+        {{end}}
+      </div>
       <p class="eyebrow">@{{.Builder.Handle}}</p>
       <h1>{{.Builder.Name}}</h1>
       <p class="bio">{{.Builder.Bio}}</p>
+
+      {{if or .Builder.WebsiteURL .Builder.GitHubURL .Builder.GitLabURL}}
+        <nav class="profile-links" aria-label="Builder links">
+          {{if .Builder.WebsiteURL}}
+            <a class="ghost-link" href="{{.Builder.WebsiteURL}}" target="_blank" rel="noreferrer">Website</a>
+          {{end}}
+          {{if .Builder.GitHubURL}}
+            <a class="ghost-link" href="{{.Builder.GitHubURL}}" target="_blank" rel="noreferrer">GitHub</a>
+          {{end}}
+          {{if .Builder.GitLabURL}}
+            <a class="ghost-link" href="{{.Builder.GitLabURL}}" target="_blank" rel="noreferrer">GitLab</a>
+          {{end}}
+        </nav>
+      {{end}}
 
       <div class="stats" aria-label="Funding summary">
         <div>

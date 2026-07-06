@@ -69,9 +69,22 @@ type Donation struct {
 }
 
 type Builder struct {
-	Name   string
-	Handle string
-	Bio    string
+	Name       string
+	Handle     string
+	Bio        string
+	AvatarURL  string
+	WebsiteURL string
+	GitHubURL  string
+	GitLabURL  string
+}
+
+type MetaData struct {
+	Title        string
+	Description  string
+	CanonicalURL string
+	ImageURL     string
+	SiteName     string
+	Type         string
 }
 
 type PageData struct {
@@ -84,6 +97,7 @@ type PageData struct {
 	TimelineHasMore   bool
 	TimelineNextLimit int
 	CSRFToken         string
+	Meta              MetaData
 }
 
 type ProjectPageData struct {
@@ -101,6 +115,7 @@ type ProjectsIndexPageData struct {
 	NextPage       int
 	TotalProjects  int
 	SupporterCount int
+	Meta           MetaData
 }
 
 type AdminLoginPageData struct {

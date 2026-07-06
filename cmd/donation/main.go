@@ -33,6 +33,8 @@ import (
 var assets embed.FS
 
 const minDonationAmount = 25000
+const defaultLocalAddr = "127.0.0.1:8080"
+const defaultLocalBaseURL = "http://" + defaultLocalAddr
 
 type loginRateLimiter struct {
 	mu      sync.Mutex
@@ -49,7 +51,7 @@ type loginRateEntry struct {
 func main() {
 	loadDotenv(".env")
 
-	addr := env("ADDR", "127.0.0.1:8094")
+	addr := env("ADDR", defaultLocalAddr)
 	dbPath := env("DB_PATH", "data/donation.db")
 	publicBaseURL := env("PUBLIC_BASE_URL", "")
 	appEnv := env("APP_ENV", "development")
@@ -106,6 +108,7 @@ func main() {
 			http.Error(w, "data load failed", http.StatusInternalServerError)
 			return
 		}
+		data.Meta = homeMeta(publicBaseURL, r, data)
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
@@ -133,11 +136,7 @@ func main() {
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, "projects.html", app.ProjectsIndexPageData{
-			Builder: app.Builder{
-				Name:   "Said Ramadhan",
-				Handle: "srmdn",
-				Bio:    "I build small, durable tools for publishing, learning, and self-hosted workflows.",
-			},
+			Builder:       app.DefaultBuilder(),
 			Projects:      projects,
 			Page:          page,
 			HasPrev:       page > 1,
@@ -145,6 +144,7 @@ func main() {
 			PrevPage:      page - 1,
 			NextPage:      page + 1,
 			TotalProjects: totalProjects,
+			Meta:          projectsMeta(publicBaseURL, r, totalProjects),
 		}); err != nil {
 			slog.Error("render projects index", "error", err)
 			http.Error(w, "render failed", http.StatusInternalServerError)
@@ -180,6 +180,7 @@ func main() {
 		data.TimelineHasMore = hasMore
 		data.TimelineNextLimit = projectTimelineLimit + 5
 		data.CSRFToken = csrfToken(w, r, adminSessionSecret, adminCookieSecure)
+		data.Meta = projectMeta(publicBaseURL, r, data.Builder, project)
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, "project.html", app.ProjectPageData{
@@ -316,7 +317,7 @@ func main() {
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, "pay.html", app.PayPageData{
-			Builder:   defaultBuilder(),
+			Builder:   app.DefaultBuilder(),
 			Donation:  donation,
 			CSRFToken: csrfToken(w, r, adminSessionSecret, adminCookieSecure),
 		}); err != nil {
@@ -369,7 +370,7 @@ func main() {
 	})
 	mux.HandleFunc("GET /thanks", func(w http.ResponseWriter, r *http.Request) {
 		page := app.ThanksPageData{
-			Builder: defaultBuilder(),
+			Builder: app.DefaultBuilder(),
 		}
 
 		id := strings.TrimSpace(r.URL.Query().Get("id"))
@@ -1094,14 +1095,6 @@ func envInt(key string, fallback int) int {
 	return value
 }
 
-func defaultBuilder() app.Builder {
-	return app.Builder{
-		Name:   "Said Ramadhan",
-		Handle: "srmdn",
-		Bio:    "I build small, durable tools for publishing, learning, and self-hosted workflows.",
-	}
-}
-
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -1347,7 +1340,7 @@ func (l *loginRateLimiter) Allow(key string, now time.Time) bool {
 func adminMagicLoginURL(baseURL, token string) string {
 	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if base == "" {
-		base = "http://127.0.0.1:8094"
+		base = defaultLocalBaseURL
 	}
 	return base + "/admin/login/verify#token=" + url.QueryEscape(token)
 }
@@ -1474,7 +1467,7 @@ func notifyAdminDonationPaid(ctx context.Context, db *store.Store, adminMailer m
 	}
 	adminURL := strings.TrimRight(strings.TrimSpace(publicBaseURL), "/") + "/admin/donations"
 	if strings.TrimSpace(adminURL) == "/admin/donations" {
-		adminURL = "http://127.0.0.1:8094/admin/donations"
+		adminURL = defaultLocalBaseURL + "/admin/donations"
 	}
 	if err := adminMailer.SendAdminDonationPaid(adminEmail, donation, adminURL); err != nil {
 		return err
@@ -1493,6 +1486,83 @@ func isLocalPublicBaseURL(baseURL string) bool {
 	}
 	host := strings.ToLower(parsed.Hostname())
 	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
+func homeMeta(publicBaseURL string, r *http.Request, data app.PageData) app.MetaData {
+	baseURL := canonicalBaseURL(publicBaseURL, r)
+	return app.MetaData{
+		Title:        data.Builder.Name + " - project support",
+		Description:  "Support ongoing projects and follow their progress in one place.",
+		CanonicalURL: absoluteURL(baseURL, "/"),
+		ImageURL:     absoluteURL(baseURL, "/static/og-default.png"),
+		SiteName:     "donate.srmdn.com",
+		Type:         "website",
+	}
+}
+
+func projectsMeta(publicBaseURL string, r *http.Request, totalProjects int) app.MetaData {
+	baseURL := canonicalBaseURL(publicBaseURL, r)
+	description := "Browse ongoing projects and see their latest progress."
+	if totalProjects > 0 {
+		description = strconv.Itoa(totalProjects) + " ongoing projects with funding progress and recent updates."
+	}
+	return app.MetaData{
+		Title:        "Projects - donate.srmdn.com",
+		Description:  description,
+		CanonicalURL: absoluteURL(baseURL, "/projects"),
+		ImageURL:     absoluteURL(baseURL, "/static/og-default.png"),
+		SiteName:     "donate.srmdn.com",
+		Type:         "website",
+	}
+}
+
+func projectMeta(publicBaseURL string, r *http.Request, builder app.Builder, project app.Project) app.MetaData {
+	baseURL := canonicalBaseURL(publicBaseURL, r)
+	description := strings.TrimSpace(project.Summary)
+	if description == "" {
+		description = strings.TrimSpace(project.Description)
+	}
+	if description == "" {
+		description = "Project details, funding progress, and recent updates."
+	}
+	return app.MetaData{
+		Title:        project.Title + " - " + builder.Name,
+		Description:  description,
+		CanonicalURL: absoluteURL(baseURL, "/projects/"+project.Slug),
+		ImageURL:     absoluteURL(baseURL, "/static/og-default.png"),
+		SiteName:     "donate.srmdn.com",
+		Type:         "website",
+	}
+}
+
+func canonicalBaseURL(publicBaseURL string, r *http.Request) string {
+	baseURL := strings.TrimRight(strings.TrimSpace(publicBaseURL), "/")
+	if baseURL != "" {
+		return baseURL
+	}
+
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwarded != "" {
+		scheme = strings.ToLower(strings.Split(forwarded, ",")[0])
+	}
+	return scheme + "://" + r.Host
+}
+
+func absoluteURL(baseURL, path string) string {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		return path
+	}
+	if path == "" {
+		return baseURL
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return baseURL + path
 }
 
 func invalidAdminSessionSecret(secret string) bool {

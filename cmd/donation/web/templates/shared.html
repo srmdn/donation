@@ -21,3 +21,23 @@
     </div>
   </footer>
 {{end}}
+
+{{define "meta_tags"}}
+  <title>{{.Meta.Title}}</title>
+  <meta name="description" content="{{.Meta.Description}}">
+  <link rel="canonical" href="{{.Meta.CanonicalURL}}">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/static/favicon-32x32.png" sizes="32x32" type="image/png">
+  <link rel="icon" href="/static/favicon-16x16.png" sizes="16x16" type="image/png">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <meta property="og:site_name" content="{{.Meta.SiteName}}">
+  <meta property="og:type" content="{{.Meta.Type}}">
+  <meta property="og:title" content="{{.Meta.Title}}">
+  <meta property="og:description" content="{{.Meta.Description}}">
+  <meta property="og:url" content="{{.Meta.CanonicalURL}}">
+  <meta property="og:image" content="{{.Meta.ImageURL}}">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{.Meta.Title}}">
+  <meta name="twitter:description" content="{{.Meta.Description}}">
+  <meta name="twitter:image" content="{{.Meta.ImageURL}}">
+{{end}}
