@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
 	"encoding/hex"
@@ -36,6 +37,8 @@ const minDonationAmount = 25000
 const defaultLocalAddr = "127.0.0.1:8080"
 const defaultLocalBaseURL = "http://" + defaultLocalAddr
 
+var staticAssetVersion = map[string]string{}
+
 type loginRateLimiter struct {
 	mu      sync.Mutex
 	window  time.Duration
@@ -46,6 +49,43 @@ type loginRateLimiter struct {
 type loginRateEntry struct {
 	count   int
 	expires time.Time
+}
+
+func mustStaticAssetDigests(staticFS fs.FS) map[string]string {
+	entries, err := fs.ReadDir(staticFS, ".")
+	if err != nil {
+		panic(err)
+	}
+	digests := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		content, err := fs.ReadFile(staticFS, entry.Name())
+		if err != nil {
+			panic(err)
+		}
+		sum := sha256.Sum256(content)
+		digests[entry.Name()] = hex.EncodeToString(sum[:])[:12]
+	}
+	staticAssetVersion = digests
+	return digests
+}
+
+func staticAssetPathFunc(digests map[string]string) func(string) string {
+	return func(name string) string {
+		if digest, ok := digests[name]; ok {
+			return "/static/" + name + "?v=" + digest
+		}
+		return "/static/" + name
+	}
+}
+
+func staticAssetPath(name string) string {
+	if digest, ok := staticAssetVersion[name]; ok {
+		return "/static/" + name + "?v=" + digest
+	}
+	return "/static/" + name
 }
 
 func main() {
@@ -85,6 +125,7 @@ func main() {
 	adminVerifyLimiter := newLoginRateLimiter(10, 15*time.Minute)
 	webhookLimiter := newLoginRateLimiter(60, time.Minute)
 	staticFS := mustSubFS(assets, "web/static")
+	assetDigests := mustStaticAssetDigests(staticFS)
 	db, err := store.Open(dbPath)
 	if err != nil {
 		slog.Error("open store", "error", err, "path", dbPath)
@@ -96,6 +137,7 @@ func main() {
 		"rupiah":         rupiah,
 		"percent":        percent,
 		"eventHasAmount": eventHasAmount,
+		"assetPath":      staticAssetPathFunc(assetDigests),
 	}).ParseFS(assets, "web/templates/*.html"))
 
 	mux := http.NewServeMux()
@@ -1494,7 +1536,7 @@ func homeMeta(publicBaseURL string, r *http.Request, data app.PageData) app.Meta
 		Title:        data.Builder.Name + " - project support",
 		Description:  "Support ongoing projects and follow their progress in one place.",
 		CanonicalURL: absoluteURL(baseURL, "/"),
-		ImageURL:     absoluteURL(baseURL, "/static/og-default.png"),
+		ImageURL:     absoluteURL(baseURL, staticAssetPath("og-default.png")),
 		SiteName:     "donate.srmdn.com",
 		Type:         "website",
 	}
@@ -1510,7 +1552,7 @@ func projectsMeta(publicBaseURL string, r *http.Request, totalProjects int) app.
 		Title:        "Projects - donate.srmdn.com",
 		Description:  description,
 		CanonicalURL: absoluteURL(baseURL, "/projects"),
-		ImageURL:     absoluteURL(baseURL, "/static/og-default.png"),
+		ImageURL:     absoluteURL(baseURL, staticAssetPath("og-default.png")),
 		SiteName:     "donate.srmdn.com",
 		Type:         "website",
 	}
@@ -1529,7 +1571,7 @@ func projectMeta(publicBaseURL string, r *http.Request, builder app.Builder, pro
 		Title:        project.Title + " - " + builder.Name,
 		Description:  description,
 		CanonicalURL: absoluteURL(baseURL, "/projects/"+project.Slug),
-		ImageURL:     absoluteURL(baseURL, "/static/og-default.png"),
+		ImageURL:     absoluteURL(baseURL, staticAssetPath("og-default.png")),
 		SiteName:     "donate.srmdn.com",
 		Type:         "website",
 	}
