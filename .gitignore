@@ -1,5 +1,6 @@
 .local/
 /donation
+/tmp/
 
 # OS / editor junk
 .DS_Store
