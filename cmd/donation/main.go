@@ -33,6 +33,8 @@ import (
 var assets embed.FS
 
 const minDonationAmount = 25000
+const defaultLocalAddr = "127.0.0.1:8080"
+const defaultLocalBaseURL = "http://" + defaultLocalAddr
 
 type loginRateLimiter struct {
 	mu      sync.Mutex
@@ -49,7 +51,7 @@ type loginRateEntry struct {
 func main() {
 	loadDotenv(".env")
 
-	addr := env("ADDR", "127.0.0.1:8094")
+	addr := env("ADDR", defaultLocalAddr)
 	dbPath := env("DB_PATH", "data/donation.db")
 	publicBaseURL := env("PUBLIC_BASE_URL", "")
 	appEnv := env("APP_ENV", "development")
@@ -1338,7 +1340,7 @@ func (l *loginRateLimiter) Allow(key string, now time.Time) bool {
 func adminMagicLoginURL(baseURL, token string) string {
 	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if base == "" {
-		base = "http://127.0.0.1:8094"
+		base = defaultLocalBaseURL
 	}
 	return base + "/admin/login/verify#token=" + url.QueryEscape(token)
 }
@@ -1465,7 +1467,7 @@ func notifyAdminDonationPaid(ctx context.Context, db *store.Store, adminMailer m
 	}
 	adminURL := strings.TrimRight(strings.TrimSpace(publicBaseURL), "/") + "/admin/donations"
 	if strings.TrimSpace(adminURL) == "/admin/donations" {
-		adminURL = "http://127.0.0.1:8094/admin/donations"
+		adminURL = defaultLocalBaseURL + "/admin/donations"
 	}
 	if err := adminMailer.SendAdminDonationPaid(adminEmail, donation, adminURL); err != nil {
 		return err
