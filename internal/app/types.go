@@ -69,9 +69,13 @@ type Donation struct {
 }
 
 type Builder struct {
-	Name   string
-	Handle string
-	Bio    string
+	Name       string
+	Handle     string
+	Bio        string
+	AvatarURL  string
+	WebsiteURL string
+	GitHubURL  string
+	GitLabURL  string
 }
 
 type MetaData struct {

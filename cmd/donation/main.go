@@ -134,11 +134,7 @@ func main() {
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, "projects.html", app.ProjectsIndexPageData{
-			Builder: app.Builder{
-				Name:   "Said Ramadhan",
-				Handle: "srmdn",
-				Bio:    "I build small, durable tools for publishing, learning, and self-hosted workflows.",
-			},
+			Builder:       app.DefaultBuilder(),
 			Projects:      projects,
 			Page:          page,
 			HasPrev:       page > 1,
@@ -319,7 +315,7 @@ func main() {
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.ExecuteTemplate(w, "pay.html", app.PayPageData{
-			Builder:   defaultBuilder(),
+			Builder:   app.DefaultBuilder(),
 			Donation:  donation,
 			CSRFToken: csrfToken(w, r, adminSessionSecret, adminCookieSecure),
 		}); err != nil {
@@ -372,7 +368,7 @@ func main() {
 	})
 	mux.HandleFunc("GET /thanks", func(w http.ResponseWriter, r *http.Request) {
 		page := app.ThanksPageData{
-			Builder: defaultBuilder(),
+			Builder: app.DefaultBuilder(),
 		}
 
 		id := strings.TrimSpace(r.URL.Query().Get("id"))
@@ -1097,14 +1093,6 @@ func envInt(key string, fallback int) int {
 	return value
 }
 
-func defaultBuilder() app.Builder {
-	return app.Builder{
-		Name:   "Said Ramadhan",
-		Handle: "srmdn",
-		Bio:    "I build small, durable tools for publishing, learning, and self-hosted workflows.",
-	}
-}
-
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -1501,8 +1489,8 @@ func isLocalPublicBaseURL(baseURL string) bool {
 func homeMeta(publicBaseURL string, r *http.Request, data app.PageData) app.MetaData {
 	baseURL := canonicalBaseURL(publicBaseURL, r)
 	return app.MetaData{
-		Title:        data.Builder.Name + " - dukung proyek independen",
-		Description:  "Pilih proyek yang ingin didukung, pantau progres donasi, dan ikuti pembaruan build secara terbuka.",
+		Title:        data.Builder.Name + " - project support",
+		Description:  "Support ongoing projects and follow their progress in one place.",
 		CanonicalURL: absoluteURL(baseURL, "/"),
 		ImageURL:     absoluteURL(baseURL, "/static/og-default.png"),
 		SiteName:     "donate.srmdn.com",
@@ -1512,12 +1500,12 @@ func homeMeta(publicBaseURL string, r *http.Request, data app.PageData) app.Meta
 
 func projectsMeta(publicBaseURL string, r *http.Request, totalProjects int) app.MetaData {
 	baseURL := canonicalBaseURL(publicBaseURL, r)
-	description := "Daftar proyek aktif yang bisa didukung, lengkap dengan progres pendanaan dan pembaruan terbaru."
+	description := "Browse ongoing projects and see their latest progress."
 	if totalProjects > 0 {
-		description = strconv.Itoa(totalProjects) + " proyek aktif siap didukung, lengkap dengan progres pendanaan dan pembaruan terbaru."
+		description = strconv.Itoa(totalProjects) + " ongoing projects with funding progress and recent updates."
 	}
 	return app.MetaData{
-		Title:        "Semua proyek - donate.srmdn.com",
+		Title:        "Projects - donate.srmdn.com",
 		Description:  description,
 		CanonicalURL: absoluteURL(baseURL, "/projects"),
 		ImageURL:     absoluteURL(baseURL, "/static/og-default.png"),
@@ -1533,10 +1521,10 @@ func projectMeta(publicBaseURL string, r *http.Request, builder app.Builder, pro
 		description = strings.TrimSpace(project.Description)
 	}
 	if description == "" {
-		description = "Dukung proyek ini dan ikuti pembaruan perkembangannya."
+		description = "Project details, funding progress, and recent updates."
 	}
 	return app.MetaData{
-		Title:        project.Title + " - dukung " + builder.Name,
+		Title:        project.Title + " - " + builder.Name,
 		Description:  description,
 		CanonicalURL: absoluteURL(baseURL, "/projects/"+project.Slug),
 		ImageURL:     absoluteURL(baseURL, "/static/og-default.png"),

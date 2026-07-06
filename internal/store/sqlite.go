@@ -58,11 +58,7 @@ func (s *Store) PageData(ctx context.Context) (app.PageData, error) {
 }
 
 func (s *Store) PageDataWithTimelineLimit(ctx context.Context, limit int) (app.PageData, error) {
-	builder := app.Builder{
-		Name:   "Said Ramadhan",
-		Handle: "srmdn",
-		Bio:    "I build small, durable tools for publishing, learning, and self-hosted workflows.",
-	}
+	builder := app.DefaultBuilder()
 
 	projects, err := s.ListFeaturedProjects(ctx, 6)
 	if err != nil {
