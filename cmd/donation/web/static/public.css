@@ -311,7 +311,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
   gap: 48px;
-  align-items: end;
+  align-items: start;
   padding-bottom: 40px;
   border-bottom: 1px solid var(--line);
 }
@@ -322,6 +322,42 @@
   color: var(--muted);
   font-size: 18px;
   line-height: 1.7;
+}
+
+.project-hero .funding-panel {
+  align-self: start;
+}
+
+.project-story {
+  padding: 36px 0 0;
+}
+
+.story-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 22px;
+}
+
+.story-head h2 {
+  margin-bottom: 0;
+}
+
+.story-body {
+  max-width: 72ch;
+}
+
+.story-body p {
+  margin: 0 0 18px;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1.75;
+  white-space: pre-line;
+}
+
+.story-body p:last-child {
+  margin-bottom: 0;
 }
 
 .project-links {
@@ -335,7 +371,6 @@
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  margin-top: 24px;
   padding: 10px 14px;
   border-radius: 6px;
   background: #f4f4ef;
@@ -700,7 +735,8 @@
   }
 
   .projects-header,
-  .pagination-row {
+  .pagination-row,
+  .story-head {
     align-items: start;
     flex-direction: column;
     gap: 14px;
