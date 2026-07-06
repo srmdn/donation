@@ -121,3 +121,7 @@ Admin access now uses an email magic link.
 - Suggested quick amounts start at `Rp25.000`
 - Donors can enter a custom amount
 - Minimum amount is enforced at `Rp25.000`
+
+## License
+
+Licensed under `AGPL-3.0-or-later`. See [LICENSE](LICENSE).

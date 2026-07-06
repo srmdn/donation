@@ -1,6 +1,7 @@
 .local/
 .climonkey/
 /donation
+/tmp/
 
 # OS / editor junk
 .DS_Store
