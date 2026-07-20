@@ -118,3 +118,30 @@ func TestListPakasirReconciliationDonationsFiltersTests(t *testing.T) {
 		}
 	}
 }
+
+func TestCompletedProviderRefreshPreservesPaidAt(t *testing.T) {
+	db := openTestStore(t)
+	id, err := db.CreatePendingDonation(context.Background(), "foliocms", "Donor", "donor@example.com", "", 25000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	donation, _ := db.FindDonationByID(context.Background(), id)
+	donation.Provider = "pakasir"
+	donation.ProviderOrderID = "DON-IDEMPOTENT"
+	if err := db.UpdateDonationPaymentDraft(context.Background(), donation); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.db.Exec(`update donations set status = 'paid', settlement_source = 'pakasir', paid_at = '2026-07-06 01:39:30' where id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateDonationProviderStatus(context.Background(), id, "paid", "completed", "qris", "2026-07-06T01:39:14Z"); err != nil {
+		t.Fatal(err)
+	}
+	var paidAt string
+	if err := db.db.QueryRow(`select paid_at from donations where id = ?`, id).Scan(&paidAt); err != nil {
+		t.Fatal(err)
+	}
+	if paidAt != "2026-07-06 01:39:30" {
+		t.Fatalf("paid_at changed to %q", paidAt)
+	}
+}

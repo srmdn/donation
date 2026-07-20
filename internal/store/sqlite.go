@@ -539,7 +539,7 @@ func (s *Store) UpdateDonationProviderStatus(ctx context.Context, id int64, stat
 			provider_payment_method = case when ? = '' then provider_payment_method else ? end,
 			provider_completed_at = case when ? = '' then provider_completed_at else ? end,
 			settlement_source = case when ? = 'paid' and settlement_source = '' then 'pakasir' else settlement_source end,
-			paid_at = case when ? = 'paid' then datetime('now') else paid_at end,
+			paid_at = case when ? = 'paid' and paid_at is null then datetime('now') else paid_at end,
 			updated_at = datetime('now')
 		where id = ?
 	`, status, providerStatus, paymentMethod, paymentMethod, completedAt, completedAt, status, status, id)
