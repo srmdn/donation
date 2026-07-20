@@ -63,9 +63,23 @@ type Donation struct {
 	ProviderTotalPayment  int
 	ProviderExpiredAt     string
 	ProviderCompletedAt   string
+	SettlementSource      string
+	ManualReference       string
 	PaidAt                string
 	CreatedAt             string
 	UpdatedAt             string
+}
+
+type ManualDonationInput struct {
+	ProjectID       int64
+	DonorName       string
+	DonorEmail      string
+	Message         string
+	Amount          int
+	PaidAt          string
+	Visibility      string
+	ManualReference string
+	ModerationNote  string
 }
 
 type Builder struct {
@@ -171,6 +185,7 @@ type AdminDonationsPageData struct {
 	FilterProjectSlug string
 	FilterHasActive   bool
 	SearchQuery       string
+	ManualPaidAt      string
 	CSRFToken         string
 }
 

@@ -48,6 +48,34 @@
     <section class="admin-panel">
       <div class="section-heading compact admin-panel-head">
         <div>
+          <p class="eyebrow">Manual transfer</p>
+          <h2>Record donation</h2>
+        </div>
+      </div>
+      <form class="admin-form admin-manual-donation-form" method="post" action="/admin/donations/manual">
+        <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+        <label class="field">
+          <span>Project</span>
+          <select name="project_id" required>
+            <option value="">Choose project</option>
+            {{range .Projects}}<option value="{{.ID}}">{{.Title}}</option>{{end}}
+          </select>
+        </label>
+        <label class="field"><span>Amount (IDR)</span><input type="number" name="amount" min="1" step="1" required></label>
+        <label class="field"><span>Paid at</span><input type="datetime-local" name="paid_at" value="{{.ManualPaidAt}}" required></label>
+        <label class="field"><span>Donor name</span><input type="text" name="name" maxlength="200"></label>
+        <label class="field"><span>Donor email</span><input type="email" name="email" maxlength="254"></label>
+        <label class="field"><span>Transfer reference</span><input type="text" name="manual_reference" maxlength="200"></label>
+        <label class="field admin-form-wide"><span>Public message</span><textarea name="message" rows="3" maxlength="2000"></textarea></label>
+        <label class="field admin-form-wide"><span>Internal note</span><textarea name="moderation_note" rows="3" maxlength="2000"></textarea></label>
+        <label class="toggle-field admin-form-wide"><input type="checkbox" name="visibility" value="public"> <span>Show publicly</span></label>
+        <div class="admin-form-wide"><button class="primary-button" type="submit">Record manual donation</button></div>
+      </form>
+    </section>
+
+    <section class="admin-panel">
+      <div class="section-heading compact admin-panel-head">
+        <div>
           <p class="eyebrow">Recent</p>
           <h2>Donation list</h2>
         </div>
@@ -125,7 +153,11 @@
                 <span>spam: {{if .IsSpam}}yes{{else}}no{{end}}</span>
                 <span>test: {{if .IsTest}}yes{{else}}no{{end}}</span>
                 <span>provider: {{.Provider}}</span>
+                <span>settlement: {{if .SettlementSource}}{{.SettlementSource}}{{else}}pending{{end}}</span>
               </div>
+              {{if and (eq .SettlementSource "manual_transfer") (eq .Provider "pakasir") (eq .ProviderStatus "completed")}}
+                <p class="form-alert error">Review required: transfer manual and Pakasir both report completed.</p>
+              {{end}}
               <details class="admin-donation-details">
                 <summary>Detail</summary>
                 <div class="admin-donation-detail-grid">
@@ -133,6 +165,7 @@
                     <span>provider status: {{if .ProviderStatus}}{{.ProviderStatus}}{{else}}-{{end}}</span>
                     {{if .ProviderOrderID}}<span>order: {{.ProviderOrderID}}</span>{{end}}
                     {{if .PaidAt}}<span>paid: {{.PaidAt}}</span>{{end}}
+                    {{if .ManualReference}}<span>manual reference: {{.ManualReference}}</span>{{end}}
                     {{if .UpdatedAt}}<span>updated: {{.UpdatedAt}}</span>{{end}}
                   </div>
                   {{if .DonorEmail}}
@@ -152,12 +185,22 @@
                     </label>
                     <button class="secondary-button" type="submit">Save note</button>
                   </form>
+                  {{if and (eq .Status "pending_payment") (eq .Provider "pakasir")}}
+                    <form class="admin-inline-note-form" method="post" action="/admin/donations/{{.ID}}/manual-payment">
+                      <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
+                      <label class="field"><span>Manual paid at</span><input type="datetime-local" name="paid_at" value="{{$.ManualPaidAt}}" required></label>
+                      <label class="field"><span>Transfer reference</span><input type="text" name="manual_reference" maxlength="200"></label>
+                      <label class="field"><span>Internal note</span><textarea name="moderation_note" rows="3" maxlength="2000">{{.ModerationNote}}</textarea></label>
+                      <label class="toggle-field"><input type="checkbox" name="visibility" value="public"> <span>Show publicly</span></label>
+                      <button class="secondary-button" type="submit">Mark paid manually</button>
+                    </form>
+                  {{end}}
                 </div>
               </details>
             </div>
 
             <div class="admin-row-actions">
-              {{if and (eq .Provider "pakasir") .ProviderOrderID}}
+              {{if and (eq .Provider "pakasir") .ProviderOrderID (ne .SettlementSource "manual_transfer")}}
                 <form method="post" action="/admin/donations/{{.ID}}">
                   <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
                   <input type="hidden" name="action" value="refresh_status">

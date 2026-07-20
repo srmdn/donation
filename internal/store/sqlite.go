@@ -76,7 +76,7 @@ func (s *Store) PageDataWithTimelineLimit(ctx context.Context, limit int) (app.P
 	}
 
 	var supporters int
-	if err := s.db.QueryRowContext(ctx, `select count(*) from donations where status = 'paid' and is_spam = 0 and is_test = 0`).Scan(&supporters); err != nil {
+	if err := s.db.QueryRowContext(ctx, `select count(*) from donations where status = 'paid' and visibility = 'public' and is_spam = 0 and is_test = 0`).Scan(&supporters); err != nil {
 		return app.PageData{}, err
 	}
 	activeProjects, err := s.CountActiveProjects(ctx)
@@ -160,7 +160,7 @@ func (s *Store) listProjectsWithLimit(ctx context.Context, activeOnly bool, limi
 			p.demo_url,
 			coalesce(p.deadline_date, ''),
 			p.is_active,
-			coalesce(sum(case when d.status = 'paid' and d.is_spam = 0 and d.is_test = 0 then d.amount else 0 end), 0) as raised,
+			coalesce(sum(case when d.status = 'paid' and d.visibility = 'public' and d.is_spam = 0 and d.is_test = 0 then d.amount else 0 end), 0) as raised,
 			max(coalesce(max(u.published_at), ''), p.updated_at) as last_updated
 		from projects p
 		left join donations d on d.project_id = p.id
@@ -344,11 +344,81 @@ func (s *Store) MarkDonationPaid(ctx context.Context, id int64) error {
 			status = 'paid',
 			provider_status = 'completed',
 			provider_completed_at = datetime('now'),
+			settlement_source = 'mock',
 			paid_at = datetime('now'),
 			updated_at = datetime('now')
 		where id = ?
 	`, id)
 	return err
+}
+
+func (s *Store) CreateManualDonation(ctx context.Context, input app.ManualDonationInput) (int64, error) {
+	if input.ProjectID <= 0 {
+		return 0, errors.New("project is required")
+	}
+	if input.Amount <= 0 {
+		return 0, errors.New("amount must be positive")
+	}
+	if input.Visibility != "hidden" && input.Visibility != "public" {
+		return 0, errors.New("invalid visibility")
+	}
+
+	result, err := s.db.ExecContext(ctx, `
+		insert into donations (
+			project_id, donor_name, donor_email, message, amount, currency,
+			status, visibility, is_spam, is_test, moderation_note,
+			provider, provider_status, settlement_source, manual_reference,
+			provider_completed_at, paid_at, created_at, updated_at
+		)
+		select
+			id, ?, ?, ?, ?, 'IDR',
+			'paid', ?, 0, 0, ?,
+			'manual', 'completed', 'manual_transfer', ?,
+			?, ?, datetime('now'), datetime('now')
+		from projects
+		where id = ?
+	`, input.DonorName, input.DonorEmail, input.Message, input.Amount, input.Visibility,
+		input.ModerationNote, input.ManualReference, input.PaidAt, input.PaidAt, input.ProjectID)
+	if err != nil {
+		return 0, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if rows == 0 {
+		return 0, sql.ErrNoRows
+	}
+	return result.LastInsertId()
+}
+
+func (s *Store) MarkDonationManualPaid(ctx context.Context, id int64, paidAt, reference, note, visibility string) error {
+	if visibility != "hidden" && visibility != "public" {
+		return errors.New("invalid visibility")
+	}
+	result, err := s.db.ExecContext(ctx, `
+		update donations
+		set
+			status = 'paid',
+			visibility = ?,
+			settlement_source = 'manual_transfer',
+			manual_reference = ?,
+			moderation_note = ?,
+			paid_at = ?,
+			updated_at = datetime('now')
+		where id = ? and status = 'pending_payment' and provider = 'pakasir'
+	`, visibility, strings.TrimSpace(reference), strings.TrimSpace(note), paidAt, id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (s *Store) FindDonationByID(ctx context.Context, id int64) (app.Donation, error) {
@@ -378,6 +448,8 @@ func (s *Store) FindDonationByID(ctx context.Context, id int64) (app.Donation, e
 			d.provider_total_payment,
 			coalesce(d.provider_expired_at, ''),
 			coalesce(d.provider_completed_at, ''),
+			d.settlement_source,
+			d.manual_reference,
 			coalesce(d.paid_at, ''),
 			d.created_at,
 			d.updated_at
@@ -416,6 +488,8 @@ func (s *Store) FindDonationByOrderID(ctx context.Context, orderID string) (app.
 			d.provider_total_payment,
 			coalesce(d.provider_expired_at, ''),
 			coalesce(d.provider_completed_at, ''),
+			d.settlement_source,
+			d.manual_reference,
 			coalesce(d.paid_at, ''),
 			d.created_at,
 			d.updated_at
@@ -464,11 +538,74 @@ func (s *Store) UpdateDonationProviderStatus(ctx context.Context, id int64, stat
 			provider_status = ?,
 			provider_payment_method = case when ? = '' then provider_payment_method else ? end,
 			provider_completed_at = case when ? = '' then provider_completed_at else ? end,
+			settlement_source = case when ? = 'paid' and settlement_source = '' then 'pakasir' else settlement_source end,
 			paid_at = case when ? = 'paid' then datetime('now') else paid_at end,
 			updated_at = datetime('now')
 		where id = ?
-	`, status, providerStatus, paymentMethod, paymentMethod, completedAt, completedAt, status, id)
+	`, status, providerStatus, paymentMethod, paymentMethod, completedAt, completedAt, status, status, id)
 	return err
+}
+
+func (s *Store) UpdateDonationProviderObservation(ctx context.Context, id int64, providerStatus, paymentMethod, completedAt string) error {
+	_, err := s.db.ExecContext(ctx, `
+		update donations
+		set
+			provider_status = ?,
+			provider_payment_method = case when ? = '' then provider_payment_method else ? end,
+			provider_completed_at = case when ? = '' then provider_completed_at else ? end,
+			updated_at = datetime('now')
+		where id = ?
+	`, providerStatus, paymentMethod, paymentMethod, completedAt, completedAt, id)
+	return err
+}
+
+func (s *Store) ListPakasirReconciliationDonations(ctx context.Context, lookback time.Duration, limit int) ([]app.Donation, error) {
+	if limit <= 0 {
+		limit = 25
+	}
+	if lookback <= 0 {
+		lookback = 48 * time.Hour
+	}
+	cutoff := time.Now().UTC().Add(-lookback).Format("2006-01-02 15:04:05")
+	rows, err := s.db.QueryContext(ctx, `
+		select
+			d.id, d.project_id, p.title, p.slug, d.donor_name, d.donor_email,
+			d.message, d.amount, d.currency, d.status, d.visibility, d.is_spam,
+			d.is_test, d.moderation_note, d.provider, d.provider_order_id,
+			d.provider_status, d.provider_payment_url, d.provider_payment_method,
+			d.provider_payment_number, d.provider_fee, d.provider_total_payment,
+			coalesce(d.provider_expired_at, ''), coalesce(d.provider_completed_at, ''),
+			d.settlement_source, d.manual_reference, coalesce(d.paid_at, ''),
+			d.created_at, d.updated_at
+		from donations d
+		join projects p on p.id = d.project_id
+		where d.provider = 'pakasir'
+			and d.provider_order_id != ''
+			and d.is_spam = 0
+			and d.is_test = 0
+			and d.created_at >= ?
+			and (
+				d.status = 'pending_payment'
+				or (d.settlement_source = 'manual_transfer' and d.provider_status in ('', 'pending'))
+				or (d.status = 'paid' and d.settlement_source = 'pakasir' and d.admin_notified_at is null)
+			)
+		order by d.created_at asc, d.id asc
+		limit ?
+	`, cutoff, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var donations []app.Donation
+	for rows.Next() {
+		donation, err := scanDonation(rows)
+		if err != nil {
+			return nil, err
+		}
+		donations = append(donations, donation)
+	}
+	return donations, rows.Err()
 }
 
 func (s *Store) DonationAdminNotified(ctx context.Context, id int64) (bool, error) {
@@ -562,6 +699,8 @@ func (s *Store) ListAdminDonations(ctx context.Context, limit int, status, visib
 			d.provider_total_payment,
 			coalesce(d.provider_expired_at, ''),
 			coalesce(d.provider_completed_at, ''),
+			d.settlement_source,
+			d.manual_reference,
 			coalesce(d.paid_at, ''),
 			d.created_at,
 			d.updated_at
@@ -619,6 +758,8 @@ func scanDonation(scanner interface {
 		&donation.ProviderTotalPayment,
 		&donation.ProviderExpiredAt,
 		&donation.ProviderCompletedAt,
+		&donation.SettlementSource,
+		&donation.ManualReference,
 		&donation.PaidAt,
 		&donation.CreatedAt,
 		&donation.UpdatedAt,
@@ -988,6 +1129,8 @@ func (s *Store) migrate(ctx context.Context) error {
 			provider_total_payment integer not null default 0,
 			provider_expired_at text,
 			provider_completed_at text,
+			settlement_source text not null default '',
+			manual_reference text not null default '',
 			admin_notified_at text,
 			paid_at text,
 			created_at text not null,
@@ -1039,12 +1182,26 @@ func (s *Store) migrate(ctx context.Context) error {
 		`alter table donations add column provider_total_payment integer not null default 0`,
 		`alter table donations add column provider_expired_at text`,
 		`alter table donations add column provider_completed_at text`,
+		`alter table donations add column settlement_source text not null default ''`,
+		`alter table donations add column manual_reference text not null default ''`,
 		`alter table donations add column admin_notified_at text`,
 	}
 	for _, statement := range alterStatements {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			return err
 		}
+	}
+	_, err = s.db.ExecContext(ctx, `
+		update donations
+		set settlement_source = case
+			when provider = 'pakasir' then 'pakasir'
+			when provider = 'mock' then 'mock'
+			else provider
+		end
+		where status = 'paid' and settlement_source = ''
+	`)
+	if err != nil {
+		return err
 	}
 	return nil
 }
