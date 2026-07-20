@@ -118,6 +118,15 @@
   gap: 14px;
 }
 
+.admin-manual-donation-form {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.admin-form-wide {
+  grid-column: 1 / -1;
+}
+
 .toggle-field {
   display: flex;
   min-height: 44px;
@@ -237,6 +246,7 @@
 
 @media (max-width: 540px) {
   .admin-form-grid,
+  .admin-manual-donation-form,
   .admin-filter-form,
   .admin-row {
     grid-template-columns: 1fr;

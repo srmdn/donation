@@ -16,17 +16,21 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/srmdn/donation/internal/app"
 	"github.com/srmdn/donation/internal/csrf"
 	"github.com/srmdn/donation/internal/mailer"
 	"github.com/srmdn/donation/internal/payment"
+	"github.com/srmdn/donation/internal/paymentsync"
 	"github.com/srmdn/donation/internal/store"
 )
 
@@ -57,6 +61,15 @@ type loginRateLimiter struct {
 type loginRateEntry struct {
 	count   int
 	expires time.Time
+}
+
+type pakasirWebhookPayload struct {
+	Amount        int    `json:"amount"`
+	OrderID       string `json:"order_id"`
+	Project       string `json:"project"`
+	Status        string `json:"status"`
+	PaymentMethod string `json:"payment_method"`
+	CompletedAt   string `json:"completed_at"`
 }
 
 func mustStaticAssetDigests(staticFS fs.FS) map[string]string {
@@ -148,6 +161,8 @@ func main() {
 	adminSessionSecret := env("ADMIN_SESSION_SECRET", "change-me")
 	adminCookieSecure := strings.HasPrefix(strings.ToLower(publicBaseURL), "https://")
 	paymentMode := env("PAYMENT_MODE", "mock")
+	reconcileInterval := envDuration("PAYMENT_RECONCILE_INTERVAL", 5*time.Minute)
+	reconcileLookback := envDuration("PAYMENT_RECONCILE_LOOKBACK", 48*time.Hour)
 	allowLoggedMagicLink := isDevelopmentEnv(appEnv) && isLocalPublicBaseURL(publicBaseURL)
 	adminMailer := mailer.New(
 		env("SMTP_HOST", ""),
@@ -187,6 +202,10 @@ func main() {
 		os.Exit(1)
 	}
 	defer db.Close()
+	pakasirClient := pakasirClientFromEnv()
+	paymentSync := paymentsync.New(db, pakasirClient, func(ctx context.Context, donation app.Donation) error {
+		return notifyAdminDonationPaid(ctx, db, adminMailer, adminEmail, publicBaseURL, donation)
+	})
 
 	renderer := mustTemplateRenderer(templateRenderer{
 		dev:          devMode,
@@ -367,13 +386,12 @@ func main() {
 			return
 		}
 
-		pakasir := pakasirClientFromEnv()
 		redirectURL := ""
 		if publicBaseURL != "" {
 			redirectURL = strings.TrimRight(publicBaseURL, "/") + "/thanks?id=" + strconv.FormatInt(id, 10)
 		}
 		orderID := pakasirOrderID(id)
-		result, err := pakasir.CreateQRISTransaction(r.Context(), orderID, donation.Amount, redirectURL)
+		result, err := pakasirClient.CreateQRISTransaction(r.Context(), orderID, donation.Amount, redirectURL)
 		if err != nil {
 			slog.Error("create pakasir transaction", "error", err, "id", id)
 			http.Error(w, "payment setup failed", http.StatusInternalServerError)
@@ -484,13 +502,12 @@ func main() {
 				if err == nil {
 					page.HasID = true
 					if paymentMode == "pakasir" && donation.Provider == "pakasir" && donation.Status != "paid" && donation.ProviderOrderID != "" {
-						if err := refreshDonationStatus(r.Context(), db, pakasirClientFromEnv(), donation); err != nil {
+						result, err := paymentSync.Sync(r.Context(), donation)
+						if err != nil {
 							slog.Warn("refresh donation status", "error", err, "id", donation.ID)
-						} else if updated, err := db.FindDonationByID(r.Context(), donationID); err == nil {
-							donation = updated
-							if err := notifyAdminDonationPaid(r.Context(), db, adminMailer, adminEmail, publicBaseURL, donation); err != nil {
-								slog.Error("notify admin donation paid", "error", err, "id", donation.ID)
-							}
+						} else {
+							donation = result.Donation
+							logPaymentSyncResult(result)
 						}
 					}
 					page.Donation = donation
@@ -515,33 +532,10 @@ func main() {
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 
-		var payload struct {
-			Amount        int    `json:"amount"`
-			OrderID       string `json:"order_id"`
-			Project       string `json:"project"`
-			Status        string `json:"status"`
-			PaymentMethod string `json:"payment_method"`
-			CompletedAt   string `json:"completed_at"`
-		}
-		decoder := json.NewDecoder(r.Body)
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&payload); err != nil {
-			http.Error(w, "invalid json", http.StatusBadRequest)
-			return
-		}
-		if err := decoder.Decode(&struct{}{}); err != io.EOF {
-			http.Error(w, "invalid json", http.StatusBadRequest)
-			return
-		}
-
-		payload.OrderID = strings.TrimSpace(payload.OrderID)
-		payload.Project = strings.TrimSpace(payload.Project)
-		if payload.OrderID == "" || payload.Amount <= 0 || payload.Project == "" {
-			http.Error(w, "missing required webhook fields", http.StatusBadRequest)
-			return
-		}
-		if payload.Project != env("PAKASIR_MERCHANT_SLUG", "") {
-			http.Error(w, "project mismatch", http.StatusBadRequest)
+		payload, reason, err := decodePakasirWebhook(r.Body, pakasirClient.Merchant())
+		if err != nil {
+			slog.Warn("reject pakasir webhook", "reason", reason)
+			http.Error(w, reason, http.StatusBadRequest)
 			return
 		}
 
@@ -560,16 +554,13 @@ func main() {
 			return
 		}
 
-		if err := refreshDonationStatus(r.Context(), db, pakasirClientFromEnv(), donation); err != nil {
+		result, err := paymentSync.Sync(r.Context(), donation)
+		if err != nil {
 			slog.Error("refresh donation status from webhook", "error", err, "donation_id", donation.ID, "order_id", payload.OrderID)
 			http.Error(w, "verification failed", http.StatusBadGateway)
 			return
 		}
-		if updated, err := db.FindDonationByID(r.Context(), donation.ID); err == nil {
-			if err := notifyAdminDonationPaid(r.Context(), db, adminMailer, adminEmail, publicBaseURL, updated); err != nil {
-				slog.Error("notify admin donation paid", "error", err, "id", updated.ID)
-			}
-		}
+		logPaymentSyncResult(result)
 
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
@@ -873,6 +864,7 @@ func main() {
 			FilterProjectSlug: filterProjectSlug,
 			FilterHasActive:   filterStatus != "" || filterVisibility != "" || filterSpam != "" || filterTest != "" || filterProjectSlug != "" || searchQuery != "",
 			SearchQuery:       searchQuery,
+			ManualPaidAt:      time.Now().In(jakartaLocation()).Format("2006-01-02T15:04"),
 			CSRFToken:         csrfToken(w, r, adminSessionSecret, adminCookieSecure),
 		}
 		for _, donation := range donations {
@@ -1072,6 +1064,82 @@ func main() {
 		}
 		http.Redirect(w, r, "/admin/updates?notice="+url.QueryEscape("Project update saved"), http.StatusSeeOther)
 	})
+	mux.HandleFunc("POST /admin/donations/manual", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(r.Context(), r, db) {
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
+			return
+		}
+		input, err := manualDonationInputFromRequest(r)
+		if err != nil {
+			setAdminDonationFlash(w, adminCookieSecure, "error", err.Error())
+			http.Redirect(w, r, "/admin/donations", http.StatusSeeOther)
+			return
+		}
+		if _, err := db.CreateManualDonation(r.Context(), input); err != nil {
+			slog.Error("create manual donation", "error", err)
+			setAdminDonationFlash(w, adminCookieSecure, "error", "Manual donation create failed")
+			http.Redirect(w, r, "/admin/donations", http.StatusSeeOther)
+			return
+		}
+		setAdminDonationFlash(w, adminCookieSecure, "notice", "Manual donation recorded")
+		http.Redirect(w, r, "/admin/donations", http.StatusSeeOther)
+	})
+	mux.HandleFunc("POST /admin/donations/{id}/manual-payment", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(r.Context(), r, db) {
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid donation id", http.StatusBadRequest)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
+			return
+		}
+		paidAt, err := manualPaidAtFromRequest(r.FormValue("paid_at"), time.Now())
+		if err != nil {
+			setAdminDonationFlash(w, adminCookieSecure, "error", err.Error())
+			http.Redirect(w, r, "/admin/donations", http.StatusSeeOther)
+			return
+		}
+		visibility := "hidden"
+		if r.FormValue("visibility") == "public" {
+			visibility = "public"
+		}
+		reference := strings.TrimSpace(r.FormValue("manual_reference"))
+		note := strings.TrimSpace(r.FormValue("moderation_note"))
+		if len(reference) > 200 || len(note) > 2000 {
+			setAdminDonationFlash(w, adminCookieSecure, "error", "Manual payment field is too long")
+			http.Redirect(w, r, "/admin/donations", http.StatusSeeOther)
+			return
+		}
+		if err := db.MarkDonationManualPaid(r.Context(), id, paidAt, reference, note, visibility); err != nil {
+			if errors.Is(err, store.ErrNotFound()) {
+				setAdminDonationFlash(w, adminCookieSecure, "error", "Donation is no longer pending")
+			} else {
+				slog.Error("mark donation manually paid", "error", err, "id", id)
+				setAdminDonationFlash(w, adminCookieSecure, "error", "Manual payment update failed")
+			}
+			http.Redirect(w, r, "/admin/donations", http.StatusSeeOther)
+			return
+		}
+		setAdminDonationFlash(w, adminCookieSecure, "notice", "Manual payment recorded")
+		http.Redirect(w, r, "/admin/donations", http.StatusSeeOther)
+	})
 	mux.HandleFunc("POST /admin/donations/{id}", func(w http.ResponseWriter, r *http.Request) {
 		if !isAdmin(r.Context(), r, db) {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
@@ -1112,17 +1180,14 @@ func main() {
 				http.Redirect(w, r, "/admin/donations", http.StatusSeeOther)
 				return
 			}
-			if err := refreshDonationStatus(r.Context(), db, pakasirClientFromEnv(), donation); err != nil {
+			result, err := paymentSync.Sync(r.Context(), donation)
+			if err != nil {
 				slog.Error("refresh donation status", "error", err, "id", id)
 				setAdminDonationFlash(w, adminCookieSecure, "error", "Refresh failed")
 				http.Redirect(w, r, "/admin/donations", http.StatusSeeOther)
 				return
 			}
-			if updated, err := db.FindDonationByID(r.Context(), id); err == nil {
-				if err := notifyAdminDonationPaid(r.Context(), db, adminMailer, adminEmail, publicBaseURL, updated); err != nil {
-					slog.Error("notify admin donation paid", "error", err, "id", id)
-				}
-			}
+			logPaymentSyncResult(result)
 			setAdminDonationFlash(w, adminCookieSecure, "notice", "Donation status refreshed")
 			http.Redirect(w, r, "/admin/donations", http.StatusSeeOther)
 			return
@@ -1149,10 +1214,67 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
+	appContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	var workerGroup sync.WaitGroup
+	if paymentMode == "pakasir" && reconcileInterval > 0 {
+		workerGroup.Add(1)
+		go func() {
+			defer workerGroup.Done()
+			runPakasirReconciler(appContext, db, paymentSync, reconcileInterval, reconcileLookback)
+		}()
+	}
+
 	slog.Info("starting donation app", "addr", addr)
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		slog.Error("server stopped", "error", err)
-		os.Exit(1)
+	serverErrors := make(chan error, 1)
+	go func() {
+		serverErrors <- server.ListenAndServe()
+	}()
+	select {
+	case err := <-serverErrors:
+		stop()
+		if err != nil && err != http.ErrServerClosed {
+			slog.Error("server stopped", "error", err)
+			return
+		}
+	case <-appContext.Done():
+		shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownContext); err != nil {
+			slog.Error("server shutdown", "error", err)
+		}
+	}
+	workerGroup.Wait()
+}
+
+func runPakasirReconciler(ctx context.Context, db *store.Store, service *paymentsync.Service, interval, lookback time.Duration) {
+	timer := time.NewTimer(30 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			runContext, cancel := context.WithTimeout(ctx, 2*time.Minute)
+			donations, err := db.ListPakasirReconciliationDonations(runContext, lookback, 25)
+			if err != nil {
+				slog.Error("list donations for pakasir reconciliation", "error", err)
+			} else {
+				for _, donation := range donations {
+					result, err := service.Sync(runContext, donation)
+					if err != nil {
+						slog.Error("reconcile pakasir donation", "error", err, "id", donation.ID, "order_id", donation.ProviderOrderID)
+						if runContext.Err() != nil {
+							break
+						}
+						continue
+					}
+					logPaymentSyncResult(result)
+				}
+			}
+			cancel()
+			timer.Reset(interval)
+		}
 	}
 }
 
@@ -1212,12 +1334,52 @@ func envInt(key string, fallback int) int {
 	return value
 }
 
+func envDuration(key string, fallback time.Duration) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil || value < 0 {
+		slog.Warn("invalid duration environment value", "key", key)
+		return fallback
+	}
+	return value
+}
+
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		next.ServeHTTP(w, r)
-		slog.Info("request", "method", r.Method, "path", r.URL.Path, "duration", time.Since(start).String())
+		wrapped := &statusResponseWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(wrapped, r)
+		slog.Info("request", "method", r.Method, "path", r.URL.Path, "status", wrapped.status, "duration", time.Since(start).String())
 	})
+}
+
+type statusResponseWriter struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+func (w *statusResponseWriter) WriteHeader(status int) {
+	if w.wroteHeader {
+		return
+	}
+	w.wroteHeader = true
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusResponseWriter) Write(body []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(body)
+}
+
+func (w *statusResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
 }
 
 func securityHeaders(next http.Handler) http.Handler {
@@ -1319,6 +1481,101 @@ func donationAmountFromRequest(r *http.Request) (int, error) {
 		return 0, errors.New("minimum donation is Rp25.000")
 	}
 	return amount, nil
+}
+
+func manualDonationInputFromRequest(r *http.Request) (app.ManualDonationInput, error) {
+	projectID, err := strconv.ParseInt(strings.TrimSpace(r.FormValue("project_id")), 10, 64)
+	if err != nil || projectID <= 0 {
+		return app.ManualDonationInput{}, errors.New("Project is required")
+	}
+	amount, err := strconv.Atoi(strings.TrimSpace(r.FormValue("amount")))
+	if err != nil || amount <= 0 {
+		return app.ManualDonationInput{}, errors.New("Amount must be a positive whole number")
+	}
+	email := strings.TrimSpace(strings.ToLower(r.FormValue("email")))
+	if email != "" {
+		address, err := mail.ParseAddress(email)
+		if err != nil || strings.ToLower(address.Address) != email {
+			return app.ManualDonationInput{}, errors.New("Donor email is invalid")
+		}
+	}
+	name := strings.TrimSpace(r.FormValue("name"))
+	message := strings.TrimSpace(r.FormValue("message"))
+	reference := strings.TrimSpace(r.FormValue("manual_reference"))
+	note := strings.TrimSpace(r.FormValue("moderation_note"))
+	if len(name) > 200 || len(email) > 254 || len(reference) > 200 || len(message) > 2000 || len(note) > 2000 {
+		return app.ManualDonationInput{}, errors.New("Manual donation field is too long")
+	}
+	paidAt, err := manualPaidAtFromRequest(r.FormValue("paid_at"), time.Now())
+	if err != nil {
+		return app.ManualDonationInput{}, err
+	}
+	visibility := "hidden"
+	if r.FormValue("visibility") == "public" {
+		visibility = "public"
+	}
+	return app.ManualDonationInput{
+		ProjectID:       projectID,
+		DonorName:       name,
+		DonorEmail:      email,
+		Message:         message,
+		Amount:          amount,
+		PaidAt:          paidAt,
+		Visibility:      visibility,
+		ManualReference: reference,
+		ModerationNote:  note,
+	}, nil
+}
+
+func manualPaidAtFromRequest(raw string, now time.Time) (string, error) {
+	value, err := time.ParseInLocation("2006-01-02T15:04", strings.TrimSpace(raw), jakartaLocation())
+	if err != nil {
+		return "", errors.New("Paid time is invalid")
+	}
+	if value.After(now.In(jakartaLocation()).Add(time.Minute)) {
+		return "", errors.New("Paid time cannot be in the future")
+	}
+	return value.UTC().Format("2006-01-02 15:04:05"), nil
+}
+
+func jakartaLocation() *time.Location {
+	return time.FixedZone("WIB", 7*60*60)
+}
+
+func decodeSingleJSON(reader io.Reader, destination any) error {
+	decoder := json.NewDecoder(reader)
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return errors.New("request body must contain one json object")
+	}
+	return nil
+}
+
+func decodePakasirWebhook(reader io.Reader, merchant string) (pakasirWebhookPayload, string, error) {
+	var payload pakasirWebhookPayload
+	if err := decodeSingleJSON(reader, &payload); err != nil {
+		return pakasirWebhookPayload{}, "invalid json", err
+	}
+	payload.OrderID = strings.TrimSpace(payload.OrderID)
+	payload.Project = strings.TrimSpace(payload.Project)
+	if payload.OrderID == "" || payload.Amount <= 0 || payload.Project == "" {
+		return pakasirWebhookPayload{}, "missing required webhook fields", errors.New("missing required webhook fields")
+	}
+	if payload.Project != merchant {
+		return pakasirWebhookPayload{}, "project mismatch", errors.New("project mismatch")
+	}
+	return payload, "", nil
+}
+
+func logPaymentSyncResult(result paymentsync.Result) {
+	if result.NotificationError != nil {
+		slog.Error("notify admin donation paid", "error", result.NotificationError, "id", result.Donation.ID)
+	}
+	if result.ManualProviderConflict {
+		slog.Warn("manual donation also completed at provider", "id", result.Donation.ID, "order_id", result.Donation.ProviderOrderID)
+	}
 }
 
 func timelineLimitFromRequest(r *http.Request, fallback int) int {
@@ -1764,41 +2021,5 @@ func pakasirClientFromEnv() payment.PakasirClient {
 		BaseURL:      env("PAKASIR_BASE_URL", "https://app.pakasir.com"),
 		APIKey:       env("PAKASIR_API_KEY", ""),
 		MerchantSlug: env("PAKASIR_MERCHANT_SLUG", ""),
-	}
-}
-
-func refreshDonationStatus(ctx context.Context, db *store.Store, client payment.PakasirClient, donation app.Donation) error {
-	if donation.ProviderOrderID == "" {
-		return nil
-	}
-	if !client.Enabled() {
-		return errors.New("pakasir client is not configured")
-	}
-
-	status, err := client.TransactionDetail(ctx, donation.ProviderOrderID, donation.Amount)
-	if err != nil {
-		return err
-	}
-	if status.OrderID != donation.ProviderOrderID {
-		return errors.New("pakasir order id mismatch")
-	}
-	if status.Amount != donation.Amount {
-		return errors.New("pakasir amount mismatch")
-	}
-	if status.Project != client.MerchantSlug {
-		return errors.New("pakasir project mismatch")
-	}
-
-	switch status.Status {
-	case "completed":
-		return db.UpdateDonationProviderStatus(ctx, donation.ID, "paid", "completed", status.PaymentMethod, status.CompletedAt)
-	case "pending":
-		return db.UpdateDonationProviderStatus(ctx, donation.ID, "pending_payment", "pending", status.PaymentMethod, "")
-	case "cancelled":
-		return db.UpdateDonationProviderStatus(ctx, donation.ID, "cancelled", "cancelled", status.PaymentMethod, "")
-	case "expired":
-		return db.UpdateDonationProviderStatus(ctx, donation.ID, "expired", "expired", status.PaymentMethod, "")
-	default:
-		return nil
 	}
 }

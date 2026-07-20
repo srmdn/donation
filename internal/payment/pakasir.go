@@ -43,6 +43,10 @@ func (c PakasirClient) Enabled() bool {
 	return strings.TrimSpace(c.APIKey) != "" && strings.TrimSpace(c.MerchantSlug) != ""
 }
 
+func (c PakasirClient) Merchant() string {
+	return strings.TrimSpace(c.MerchantSlug)
+}
+
 func (c PakasirClient) CreateQRISTransaction(ctx context.Context, orderID string, amount int, redirectURL string) (CreateTransactionResult, error) {
 	if !c.Enabled() {
 		return CreateTransactionResult{}, errors.New("pakasir is not configured")
@@ -67,7 +71,7 @@ func (c PakasirClient) CreateQRISTransaction(ctx context.Context, orderID string
 
 	resp, err := c.client().Do(req)
 	if err != nil {
-		return CreateTransactionResult{}, err
+		return CreateTransactionResult{}, safeRequestError("pakasir create transaction", err)
 	}
 	defer resp.Body.Close()
 
@@ -116,12 +120,12 @@ func (c PakasirClient) TransactionDetail(ctx context.Context, orderID string, am
 	endpoint := strings.TrimRight(c.baseURL(), "/") + "/api/transactiondetail?" + query.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return TransactionStatus{}, err
+		return TransactionStatus{}, errors.New("pakasir transaction detail request is invalid")
 	}
 
 	resp, err := c.client().Do(req)
 	if err != nil {
-		return TransactionStatus{}, err
+		return TransactionStatus{}, safeRequestError("pakasir transaction detail", err)
 	}
 	defer resp.Body.Close()
 
@@ -178,4 +182,18 @@ func (c PakasirClient) client() *http.Client {
 		return c.HTTPClient
 	}
 	return &http.Client{Timeout: 15 * time.Second}
+}
+
+func safeRequestError(operation string, err error) error {
+	if errors.Is(err, context.Canceled) {
+		return fmt.Errorf("%s request canceled", operation)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("%s request timed out", operation)
+	}
+	var netErr interface{ Timeout() bool }
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return fmt.Errorf("%s request timed out", operation)
+	}
+	return fmt.Errorf("%s request failed", operation)
 }

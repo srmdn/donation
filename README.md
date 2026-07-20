@@ -84,7 +84,11 @@ Pakasir placeholders:
 PAKASIR_BASE_URL=https://app.pakasir.com
 PAKASIR_API_KEY=
 PAKASIR_MERCHANT_SLUG=
+PAYMENT_RECONCILE_INTERVAL=5m
+PAYMENT_RECONCILE_LOOKBACK=48h
 ```
+
+When `PAYMENT_MODE=pakasir`, successful webhooks are verified against Pakasir before local status changes. A background reconciler also checks recent pending payments every five minutes by default. Set `PAYMENT_RECONCILE_INTERVAL=0` to disable it.
 
 ## Roadmap
 
@@ -121,6 +125,11 @@ Admin access now uses an email magic link.
 - Suggested quick amounts start at `Rp25.000`
 - Donors can enter a custom amount
 - Minimum amount is enforced at `Rp25.000`
+- Admin-recorded manual transfers may use any positive whole IDR amount
+
+## Manual Transfers
+
+Admin donation management can record a new bank transfer or mark an existing pending payment as paid manually. Manual entries default to hidden, stay out of public totals and timelines, preserve any existing Pakasir order metadata, and can be made public after verification.
 
 ## License
 
