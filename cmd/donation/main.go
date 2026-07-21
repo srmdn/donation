@@ -222,6 +222,16 @@ func main() {
 			"assetPath":      assetPath,
 		},
 	})
+	renderNotFound := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusNotFound)
+		if err := renderer.ExecuteTemplate(w, "not_found.html", app.PageData{
+			Builder: app.DefaultBuilder(),
+			Meta:    notFoundMeta(publicBaseURL, r),
+		}); err != nil {
+			slog.Error("render not found", "error", err)
+		}
+	}
 
 	mux := http.NewServeMux()
 	mux.Handle("GET /static/", noCacheInDev(devMode, http.StripPrefix("/static/", http.FileServerFS(staticFS))))
@@ -285,7 +295,7 @@ func main() {
 
 		project, err := db.FindProject(r.Context(), r.PathValue("slug"))
 		if errors.Is(err, store.ErrNotFound()) {
-			http.NotFound(w, r)
+			renderNotFound(w, r)
 			return
 		}
 		if err != nil {
@@ -319,7 +329,7 @@ func main() {
 	mux.HandleFunc("GET /projects/{slug}/report", func(w http.ResponseWriter, r *http.Request) {
 		report, err := db.ProjectReport(r.Context(), r.PathValue("slug"))
 		if errors.Is(err, store.ErrNotFound()) {
-			http.NotFound(w, r)
+			renderNotFound(w, r)
 			return
 		}
 		if err != nil {
@@ -461,7 +471,7 @@ func main() {
 
 		donation, err := db.FindDonationByID(r.Context(), id)
 		if errors.Is(err, store.ErrNotFound()) {
-			http.NotFound(w, r)
+			renderNotFound(w, r)
 			return
 		}
 		if err != nil {
@@ -1350,6 +1360,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
 	})
+	mux.HandleFunc("GET /", renderNotFound)
 
 	server := &http.Server{
 		Addr:              addr,
@@ -2242,6 +2253,18 @@ func projectReportMeta(publicBaseURL string, r *http.Request, project app.Projec
 		Title:        "Laporan " + project.Title + " - donate.srmdn.com",
 		Description:  "Laporan donasi terverifikasi, pengeluaran, dan saldo tersisa untuk proyek " + project.Title + ".",
 		CanonicalURL: absoluteURL(baseURL, "/projects/"+project.Slug+"/report"),
+		ImageURL:     absoluteURL(baseURL, staticAssetPath("og-default.png")),
+		SiteName:     "donate.srmdn.com",
+		Type:         "website",
+	}
+}
+
+func notFoundMeta(publicBaseURL string, r *http.Request) app.MetaData {
+	baseURL := canonicalBaseURL(publicBaseURL, r)
+	return app.MetaData{
+		Title:        "Halaman tidak ditemukan - donate.srmdn.com",
+		Description:  "Link mungkin sudah berubah atau tidak tersedia. Kembali ke halaman donasi utama.",
+		CanonicalURL: absoluteURL(baseURL, r.URL.Path),
 		ImageURL:     absoluteURL(baseURL, staticAssetPath("og-default.png")),
 		SiteName:     "donate.srmdn.com",
 		Type:         "website",
