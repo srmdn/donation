@@ -70,6 +70,15 @@ type Donation struct {
 	UpdatedAt             string
 }
 
+type ReportIncomeEntry struct {
+	ID               int64
+	DonorName        string
+	Amount           int
+	Visibility       string
+	SettlementSource string
+	PaidAt           string
+}
+
 type ManualDonationInput struct {
 	ProjectID       int64
 	DonorName       string
@@ -80,6 +89,38 @@ type ManualDonationInput struct {
 	Visibility      string
 	ManualReference string
 	ModerationNote  string
+}
+
+type ProjectExpense struct {
+	ID             int64
+	ProjectID      int64
+	ProjectSlug    string
+	ProjectTitle   string
+	Category       string
+	Description    string
+	Vendor         string
+	Reference      string
+	Amount         int
+	Currency       string
+	Visibility     string
+	IsVoided       bool
+	VoidedAt       string
+	ModerationNote string
+	IncurredAt     string
+	CreatedAt      string
+	UpdatedAt      string
+}
+
+type ProjectExpenseInput struct {
+	ProjectID      int64
+	Category       string
+	Description    string
+	Vendor         string
+	Reference      string
+	Amount         int
+	Visibility     string
+	ModerationNote string
+	IncurredAt     string
 }
 
 type Builder struct {
@@ -117,6 +158,20 @@ type PageData struct {
 type ProjectPageData struct {
 	PageData
 	Project Project
+}
+
+type ProjectReportPageData struct {
+	Builder          Builder
+	Project          Project
+	Income           []ReportIncomeEntry
+	Expenses         []ProjectExpense
+	TotalIncome      int
+	TotalExpenses    int
+	Balance          int
+	DonationCount    int
+	ExpenseCount     int
+	HasPrivateIncome bool
+	Meta             MetaData
 }
 
 type ProjectsIndexPageData struct {
@@ -187,6 +242,22 @@ type AdminDonationsPageData struct {
 	SearchQuery       string
 	ManualPaidAt      string
 	CSRFToken         string
+}
+
+type AdminReportsPageData struct {
+	Projects         []Project
+	Expenses         []ProjectExpense
+	Error            string
+	Notice           string
+	ExpenseProjectID int64
+	ExpenseCategory  string
+	ExpenseDesc      string
+	ExpenseVendor    string
+	ExpenseReference string
+	ExpenseAmount    string
+	ExpenseNote      string
+	ExpenseIncurred  string
+	CSRFToken        string
 }
 
 type PayPageData struct {

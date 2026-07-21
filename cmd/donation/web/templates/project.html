@@ -52,16 +52,17 @@
         {{end}}
       </div>
 
-      {{if or .Project.RepoURL .Project.DemoURL}}
-        <div class="project-links">
+      <div class="project-links">
+        <a class="ghost-link" href="/projects/{{.Project.Slug}}/report">Laporan donasi</a>
+        {{if or .Project.RepoURL .Project.DemoURL}}
           {{if .Project.RepoURL}}
             <a class="ghost-link" href="{{.Project.RepoURL}}" target="_blank" rel="noreferrer">Repository</a>
           {{end}}
           {{if .Project.DemoURL}}
             <a class="ghost-link" href="{{.Project.DemoURL}}" target="_blank" rel="noreferrer">Live demo</a>
           {{end}}
-        </div>
-      {{end}}
+        {{end}}
+      </div>
     </section>
 
     <section class="donation-layout">

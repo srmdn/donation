@@ -43,15 +43,15 @@ func TestCreateManualDonationDefaultsAreStored(t *testing.T) {
 		t.Fatalf("unexpected donation: %#v", donation)
 	}
 	afterHidden, _ := db.FindProject(context.Background(), projects[0].Slug)
-	if afterHidden.Raised != before.Raised {
-		t.Fatalf("hidden donation changed public total from %d to %d", before.Raised, afterHidden.Raised)
+	if afterHidden.Raised != before.Raised+15000 {
+		t.Fatalf("hidden donation was not counted in accounting total: got %d, want %d", afterHidden.Raised, before.Raised+15000)
 	}
 	if err := db.UpdateDonationModeration(context.Background(), id, "show_public"); err != nil {
 		t.Fatal(err)
 	}
 	afterPublic, _ := db.FindProject(context.Background(), projects[0].Slug)
 	if afterPublic.Raised != before.Raised+15000 {
-		t.Fatalf("public total=%d, want %d", afterPublic.Raised, before.Raised+15000)
+		t.Fatalf("public toggle changed accounting total=%d, want %d", afterPublic.Raised, before.Raised+15000)
 	}
 }
 
@@ -143,5 +143,86 @@ func TestCompletedProviderRefreshPreservesPaidAt(t *testing.T) {
 	}
 	if paidAt != "2026-07-06 01:39:30" {
 		t.Fatalf("paid_at changed to %q", paidAt)
+	}
+}
+
+func TestProjectReportIncludesHiddenIncomeButNotHiddenExpenses(t *testing.T) {
+	db := openTestStore(t)
+	projects, err := db.ListAllProjects(context.Background())
+	if err != nil || len(projects) == 0 {
+		t.Fatalf("projects: %v", err)
+	}
+	project := projects[0]
+	if _, err := db.CreateManualDonation(context.Background(), app.ManualDonationInput{
+		ProjectID:  project.ID,
+		Amount:     42000,
+		PaidAt:     "2026-07-20 02:00:00",
+		Visibility: "hidden",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.CreateProjectExpense(context.Background(), app.ProjectExpenseInput{
+		ProjectID:   project.ID,
+		Category:    "hosting",
+		Description: "VPS",
+		Amount:      25000,
+		Visibility:  "public",
+		IncurredAt:  "2026-07-20 00:00:00",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.CreateProjectExpense(context.Background(), app.ProjectExpenseInput{
+		ProjectID:   project.ID,
+		Category:    "internal",
+		Description: "Private admin note",
+		Amount:      10000,
+		Visibility:  "hidden",
+		IncurredAt:  "2026-07-20 00:00:00",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := db.ProjectReport(context.Background(), project.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.HasPrivateIncome {
+		t.Fatal("expected report to flag private income")
+	}
+	if report.TotalIncome < 42000 {
+		t.Fatalf("hidden income missing from report total: %d", report.TotalIncome)
+	}
+	if report.TotalExpenses != 25000 {
+		t.Fatalf("total expenses=%d, want public expense only", report.TotalExpenses)
+	}
+}
+
+func TestVoidProjectExpenseRemovesItFromPublicReport(t *testing.T) {
+	db := openTestStore(t)
+	projects, err := db.ListAllProjects(context.Background())
+	if err != nil || len(projects) == 0 {
+		t.Fatalf("projects: %v", err)
+	}
+	project := projects[0]
+	id, err := db.CreateProjectExpense(context.Background(), app.ProjectExpenseInput{
+		ProjectID:   project.ID,
+		Category:    "domain",
+		Description: "Domain renewal",
+		Amount:      120000,
+		Visibility:  "public",
+		IncurredAt:  "2026-07-20 00:00:00",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.VoidProjectExpense(context.Background(), id, "wrong project"); err != nil {
+		t.Fatal(err)
+	}
+	report, err := db.ProjectReport(context.Background(), project.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.TotalExpenses != 0 {
+		t.Fatalf("voided expense still counted: %d", report.TotalExpenses)
 	}
 }

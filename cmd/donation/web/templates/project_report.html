@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {{template "meta_tags" .}}
+  <link rel="stylesheet" href="{{assetPath "base.css"}}">
+  <link rel="stylesheet" href="{{assetPath "public.css"}}">
+</head>
+<body>
+  {{template "site_nav" .}}
+  <main class="detail-shell report-shell">
+    <nav class="top-nav" aria-label="Breadcrumb">
+      <a href="/projects/{{.Project.Slug}}">Back to {{.Project.Title}}</a>
+      <a href="/projects/{{.Project.Slug}}/report.csv">Download CSV</a>
+    </nav>
+
+    <section class="project-hero accent-{{.Project.Accent}}">
+      <div>
+        <p class="eyebrow">Transparency report</p>
+        <h1>{{.Project.Title}}</h1>
+        <p class="lede">Laporan pemasukan, pengeluaran, dan saldo proyek. Donasi Orang Baik tetap dihitung sebagai pemasukan tanpa membuka identitas donatur.</p>
+      </div>
+
+      <aside class="funding-panel" aria-label="Saldo proyek">
+        <span class="panel-label">Saldo saat ini</span>
+        <strong>{{rupiah .Balance}}</strong>
+        <p>{{rupiah .TotalIncome}} masuk, {{rupiah .TotalExpenses}} dipakai.</p>
+      </aside>
+    </section>
+
+    <section class="report-summary" aria-label="Ringkasan laporan">
+      <div>
+        <span class="stat-label">Pemasukan</span>
+        <strong>{{rupiah .TotalIncome}}</strong>
+        <p>{{.DonationCount}} donasi bersih.</p>
+      </div>
+      <div>
+        <span class="stat-label">Pengeluaran</span>
+        <strong>{{rupiah .TotalExpenses}}</strong>
+        <p>{{.ExpenseCount}} transaksi publik.</p>
+      </div>
+      <div>
+        <span class="stat-label">Saldo</span>
+        <strong>{{rupiah .Balance}}</strong>
+        <p>Dihitung dari pemasukan dikurangi pengeluaran.</p>
+      </div>
+    </section>
+
+    {{if .HasPrivateIncome}}
+      <p class="report-note">Sebagian donasi dicatat sebagai Orang Baik. Nominal masuk ke laporan, identitas dan pesan donatur tidak ditampilkan.</p>
+    {{end}}
+
+    <section class="report-grid">
+      <section aria-label="Pemasukan donasi">
+        <div class="section-heading compact">
+          <div>
+            <p class="eyebrow">Income</p>
+            <h2>Donasi masuk</h2>
+          </div>
+        </div>
+
+        <div class="report-table">
+          {{range .Income}}
+            <article class="report-row">
+              <div>
+                <strong>{{.DonorName}}</strong>
+                <div class="report-meta">
+                  <span>{{.PaidAt}}</span>
+                  <span>{{sourceLabel .SettlementSource}}</span>
+                </div>
+              </div>
+              <strong class="amount">{{rupiah .Amount}}</strong>
+            </article>
+          {{else}}
+            <p class="report-empty">Belum ada donasi paid untuk proyek ini.</p>
+          {{end}}
+        </div>
+      </section>
+
+      <section aria-label="Pengeluaran proyek">
+        <div class="section-heading compact">
+          <div>
+            <p class="eyebrow">Expenses</p>
+            <h2>Pengeluaran</h2>
+          </div>
+        </div>
+
+        <div class="report-table">
+          {{range .Expenses}}
+            <article class="report-row">
+              <div>
+                <strong>{{.Description}}</strong>
+                <div class="report-meta">
+                  <span>{{.IncurredAt}}</span>
+                  <span>{{.Category}}</span>
+                  {{if .Vendor}}<span>{{.Vendor}}</span>{{end}}
+                  {{if .Reference}}<span>{{.Reference}}</span>{{end}}
+                </div>
+              </div>
+              <strong class="amount expense">{{rupiah .Amount}}</strong>
+            </article>
+          {{else}}
+            <p class="report-empty">Belum ada pengeluaran publik untuk proyek ini.</p>
+          {{end}}
+        </div>
+      </section>
+    </section>
+  </main>
+  {{template "site_footer" .}}
+</body>
+</html>
