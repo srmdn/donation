@@ -382,6 +382,86 @@
   margin-top: 20px;
 }
 
+.report-shell .project-hero {
+  margin-bottom: 28px;
+}
+
+.report-summary,
+.report-grid,
+.report-row,
+.report-meta {
+  display: grid;
+}
+
+.report-summary {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin: 28px 0;
+}
+
+.report-summary > div,
+.report-row,
+.report-empty,
+.report-note {
+  padding: 18px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.report-summary strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 24px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.report-summary p,
+.report-empty,
+.report-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.report-note {
+  margin: 0 0 28px;
+}
+
+.report-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 28px;
+  align-items: start;
+}
+
+.report-table {
+  display: grid;
+  gap: 10px;
+}
+
+.report-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 18px;
+}
+
+.report-meta {
+  grid-template-columns: repeat(2, max-content);
+  gap: 8px 12px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.report-row .amount {
+  margin-top: 0;
+  white-space: nowrap;
+}
+
+.report-row .amount.expense {
+  color: #8a6c2f;
+}
+
 .project-meta-note {
   display: inline-flex;
   align-items: center;
@@ -718,7 +798,9 @@
   .project-list,
   .projects-index-grid,
   .project-hero,
-  .donation-layout {
+  .donation-layout,
+  .report-summary,
+  .report-grid {
     grid-template-columns: 1fr;
     gap: 28px;
   }
@@ -764,10 +846,16 @@
 
   .project-topline,
   .project-money,
-  .event-head {
+  .event-head,
+  .report-row {
     align-items: start;
     flex-direction: column;
     gap: 6px;
+  }
+
+  .report-row,
+  .report-meta {
+    grid-template-columns: 1fr;
   }
 
   .project-card-actions {

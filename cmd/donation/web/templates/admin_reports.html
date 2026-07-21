@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin reports</title>
+  <link rel="stylesheet" href="{{assetPath "base.css"}}">
+  <link rel="stylesheet" href="{{assetPath "admin.css"}}">
+</head>
+<body>
+  {{template "site_nav" .}}
+  <main class="admin-shell">
+    <header class="admin-header">
+      <div>
+        <p class="eyebrow">Admin</p>
+        <h1>Reports</h1>
+      </div>
+
+      <div class="admin-actions">
+        <div class="admin-stats">
+          <span>{{len .Expenses}} expenses</span>
+          <span>{{len .Projects}} projects</span>
+        </div>
+        <form method="post" action="/admin/logout">
+          <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+          <button class="secondary-button" type="submit">Sign out</button>
+        </form>
+      </div>
+    </header>
+
+    <nav class="admin-subnav" aria-label="Admin">
+      <a class="ghost-link" href="/admin/projects">Projects</a>
+      <a class="ghost-link" href="/admin/updates">Updates</a>
+      <a class="ghost-link current" href="/admin/reports">Reports</a>
+      <a class="ghost-link" href="/admin/donations">Donations</a>
+    </nav>
+
+    {{if .Error}}
+      <p class="form-alert error">{{.Error}}</p>
+    {{end}}
+    {{if .Notice}}
+      <p class="form-alert notice">{{.Notice}}</p>
+    {{end}}
+
+    <section class="admin-grid">
+      <section class="admin-panel">
+        <div class="section-heading compact admin-panel-head">
+          <div>
+            <p class="eyebrow">Expense ledger</p>
+            <h2>Record expense</h2>
+          </div>
+        </div>
+
+        <form class="admin-form" method="post" action="/admin/expenses">
+          <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+          <label class="field">
+            <span>Project</span>
+            <select name="project_id" required>
+              <option value="">Choose project</option>
+              {{range .Projects}}
+                <option value="{{.ID}}" {{if eq $.ExpenseProjectID .ID}}selected{{end}}>{{.Title}}</option>
+              {{end}}
+            </select>
+          </label>
+
+          <div class="admin-form-grid">
+            <label class="field"><span>Amount (IDR)</span><input type="number" name="amount" min="1" step="1" value="{{.ExpenseAmount}}" required></label>
+            <label class="field"><span>Date</span><input type="date" name="incurred_at" value="{{.ExpenseIncurred}}" required></label>
+          </div>
+
+          <div class="admin-form-grid">
+            <label class="field"><span>Category</span><input name="category" value="{{.ExpenseCategory}}" maxlength="100" placeholder="hosting, domain, design" required></label>
+            <label class="field"><span>Vendor/payee</span><input name="vendor" value="{{.ExpenseVendor}}" maxlength="200"></label>
+          </div>
+
+          <label class="field"><span>Description</span><textarea name="description" rows="3" maxlength="500" required>{{.ExpenseDesc}}</textarea></label>
+          <label class="field"><span>Reference</span><input name="reference" value="{{.ExpenseReference}}" maxlength="200" placeholder="invoice, receipt, transfer ref"></label>
+          <label class="field"><span>Internal note</span><textarea name="moderation_note" rows="3" maxlength="2000">{{.ExpenseNote}}</textarea></label>
+          <label class="toggle-field"><input type="checkbox" name="visibility" value="hidden"> <span>Hide from public report</span></label>
+          <button class="primary-button" type="submit">Record expense</button>
+        </form>
+      </section>
+
+      <section class="admin-panel">
+        <div class="section-heading compact admin-panel-head">
+          <div>
+            <p class="eyebrow">Current</p>
+            <h2>Expense list</h2>
+          </div>
+        </div>
+
+        <div class="admin-table">
+          {{range .Expenses}}
+            <article class="admin-row">
+              <div>
+                <div class="admin-row-top">
+                  <strong>{{.Description}}</strong>
+                  <span class="status-pill {{if .IsVoided}}inactive{{else}}active{{end}}">{{if .IsVoided}}voided{{else}}{{.Visibility}}{{end}}</span>
+                </div>
+                <p>{{rupiah .Amount}} for <a href="/projects/{{.ProjectSlug}}/report">{{.ProjectTitle}}</a></p>
+                <div class="admin-row-meta">
+                  <span>{{.IncurredAt}}</span>
+                  <span>{{.Category}}</span>
+                  {{if .Vendor}}<span>{{.Vendor}}</span>{{end}}
+                  {{if .Reference}}<span>{{.Reference}}</span>{{end}}
+                </div>
+                {{if .ModerationNote}}<p>{{.ModerationNote}}</p>{{end}}
+              </div>
+              <div class="admin-row-actions">
+                {{if not .IsVoided}}
+                  <form method="post" action="/admin/expenses/{{.ID}}">
+                    <input type="hidden" name="_csrf" value="{{$.CSRFToken}}">
+                    <input type="hidden" name="action" value="void">
+                    <input type="hidden" name="moderation_note" value="{{.ModerationNote}}">
+                    <button class="ghost-link button-link" type="submit">Void</button>
+                  </form>
+                {{end}}
+              </div>
+            </article>
+          {{else}}
+            <p class="form-alert notice">No expenses recorded yet.</p>
+          {{end}}
+        </div>
+      </section>
+    </section>
+  </main>
+  {{template "site_footer" .}}
+</body>
+</html>
