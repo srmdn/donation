@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"html/template"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
@@ -71,6 +72,22 @@ func TestDecodePakasirWebhookRejectsInvalidPayloads(t *testing.T) {
 	}
 }
 
+func TestEmbeddedTemplatesParse(t *testing.T) {
+	templateFS, _, templateGlob := assetFS(false)
+	_, err := template.New("index.html").Funcs(template.FuncMap{
+		"rupiah":         rupiah,
+		"percent":        percent,
+		"progressMax":    progressMax,
+		"paragraphs":     descriptionParagraphs,
+		"eventHasAmount": eventHasAmount,
+		"sourceLabel":    sourceLabel,
+		"assetPath":      func(name string) string { return "/static/" + name },
+	}).ParseFS(templateFS, templateGlob)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestManualDonationInputDefaultsHidden(t *testing.T) {
 	now := time.Date(2026, 7, 20, 10, 0, 0, 0, jakartaLocation())
 	form := url.Values{
@@ -97,6 +114,39 @@ func TestManualPaidAtRejectsFuture(t *testing.T) {
 	}
 	value, err := manualPaidAtFromRequest("2026-07-20T09:59", now)
 	if err != nil || value != "2026-07-20 02:59:00" {
+		t.Fatalf("got value=%q error=%v", value, err)
+	}
+}
+
+func TestProjectExpenseInputDefaultsPublic(t *testing.T) {
+	now := time.Date(2026, 7, 20, 10, 0, 0, 0, jakartaLocation())
+	form := url.Values{
+		"project_id":  {"1"},
+		"amount":      {"15000"},
+		"incurred_at": {now.Format("2006-01-02")},
+		"category":    {"hosting"},
+		"description": {"VPS renewal"},
+		"vendor":      {"GreenCloud"},
+		"reference":   {"INV-1"},
+	}
+	request := httptest.NewRequest("POST", "/admin/expenses", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	input, err := projectExpenseInputFromRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if input.Visibility != "public" || input.Amount != 15000 || input.Category != "hosting" {
+		t.Fatalf("unexpected input: %#v", input)
+	}
+}
+
+func TestExpenseDateRejectsFuture(t *testing.T) {
+	now := time.Date(2026, 7, 20, 10, 0, 0, 0, jakartaLocation())
+	if _, err := expenseDateFromRequest("2026-07-21", now); err == nil {
+		t.Fatal("expected future expense date to fail")
+	}
+	value, err := expenseDateFromRequest("2026-07-20", now)
+	if err != nil || value != "2026-07-19 17:00:00" {
 		t.Fatalf("got value=%q error=%v", value, err)
 	}
 }

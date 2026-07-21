@@ -76,7 +76,7 @@ func (s *Store) PageDataWithTimelineLimit(ctx context.Context, limit int) (app.P
 	}
 
 	var supporters int
-	if err := s.db.QueryRowContext(ctx, `select count(*) from donations where status = 'paid' and visibility = 'public' and is_spam = 0 and is_test = 0`).Scan(&supporters); err != nil {
+	if err := s.db.QueryRowContext(ctx, `select count(*) from donations where status = 'paid' and is_spam = 0 and is_test = 0`).Scan(&supporters); err != nil {
 		return app.PageData{}, err
 	}
 	activeProjects, err := s.CountActiveProjects(ctx)
@@ -160,7 +160,7 @@ func (s *Store) listProjectsWithLimit(ctx context.Context, activeOnly bool, limi
 			p.demo_url,
 			coalesce(p.deadline_date, ''),
 			p.is_active,
-			coalesce(sum(case when d.status = 'paid' and d.visibility = 'public' and d.is_spam = 0 and d.is_test = 0 then d.amount else 0 end), 0) as raised,
+			coalesce(sum(case when d.status = 'paid' and d.is_spam = 0 and d.is_test = 0 then d.amount else 0 end), 0) as raised,
 			max(coalesce(max(u.published_at), ''), p.updated_at) as last_updated
 		from projects p
 		left join donations d on d.project_id = p.id
@@ -310,6 +310,126 @@ func (s *Store) ListTimeline(ctx context.Context, projectSlug string, limit int)
 	}
 
 	return events, hasMore, nil
+}
+
+func (s *Store) ProjectReport(ctx context.Context, slug string) (app.ProjectReportPageData, error) {
+	project, err := s.FindProject(ctx, slug)
+	if err != nil {
+		return app.ProjectReportPageData{}, err
+	}
+
+	income, totalIncome, hasPrivateIncome, err := s.ListProjectReportIncome(ctx, project.ID)
+	if err != nil {
+		return app.ProjectReportPageData{}, err
+	}
+	expenses, totalExpenses, err := s.ListProjectReportExpenses(ctx, project.ID)
+	if err != nil {
+		return app.ProjectReportPageData{}, err
+	}
+
+	return app.ProjectReportPageData{
+		Builder:          app.DefaultBuilder(),
+		Project:          project,
+		Income:           income,
+		Expenses:         expenses,
+		TotalIncome:      totalIncome,
+		TotalExpenses:    totalExpenses,
+		Balance:          totalIncome - totalExpenses,
+		DonationCount:    len(income),
+		ExpenseCount:     len(expenses),
+		HasPrivateIncome: hasPrivateIncome,
+	}, nil
+}
+
+func (s *Store) ListProjectReportIncome(ctx context.Context, projectID int64) ([]app.ReportIncomeEntry, int, bool, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		select
+			id,
+			case when visibility = 'public' and donor_name != '' then donor_name else 'Orang Baik' end,
+			amount,
+			visibility,
+			settlement_source,
+			coalesce(paid_at, created_at)
+		from donations
+		where project_id = ?
+			and status = 'paid'
+			and is_spam = 0
+			and is_test = 0
+		order by coalesce(paid_at, created_at) desc, id desc
+	`, projectID)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	defer rows.Close()
+
+	var entries []app.ReportIncomeEntry
+	total := 0
+	hasPrivate := false
+	for rows.Next() {
+		var entry app.ReportIncomeEntry
+		var paidAt string
+		if err := rows.Scan(&entry.ID, &entry.DonorName, &entry.Amount, &entry.Visibility, &entry.SettlementSource, &paidAt); err != nil {
+			return nil, 0, false, err
+		}
+		entry.PaidAt = displayJakartaTime(paidAt)
+		if entry.Visibility != "public" {
+			hasPrivate = true
+		}
+		total += entry.Amount
+		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, false, err
+	}
+	return entries, total, hasPrivate, nil
+}
+
+func (s *Store) ListProjectReportExpenses(ctx context.Context, projectID int64) ([]app.ProjectExpense, int, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		select
+			e.id,
+			e.project_id,
+			p.slug,
+			p.title,
+			e.category,
+			e.description,
+			e.vendor,
+			e.reference,
+			e.amount,
+			e.currency,
+			e.visibility,
+			e.is_voided,
+			coalesce(e.voided_at, ''),
+			e.moderation_note,
+			e.incurred_at,
+			e.created_at,
+			e.updated_at
+		from project_expenses e
+		join projects p on p.id = e.project_id
+		where e.project_id = ?
+			and e.visibility = 'public'
+			and e.is_voided = 0
+		order by e.incurred_at desc, e.id desc
+	`, projectID)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var expenses []app.ProjectExpense
+	total := 0
+	for rows.Next() {
+		expense, err := scanExpense(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		total += expense.Amount
+		expenses = append(expenses, expense)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return expenses, total, nil
 }
 
 func (s *Store) CreatePendingDonation(ctx context.Context, projectSlug, name, email, message string, amount int) (int64, error) {
@@ -725,6 +845,149 @@ func (s *Store) ListAdminDonations(ctx context.Context, limit int, status, visib
 	}
 
 	return donations, rows.Err()
+}
+
+func (s *Store) CreateProjectExpense(ctx context.Context, input app.ProjectExpenseInput) (int64, error) {
+	if input.ProjectID <= 0 {
+		return 0, errors.New("project is required")
+	}
+	if input.Amount <= 0 {
+		return 0, errors.New("amount must be positive")
+	}
+	if input.Category == "" {
+		return 0, errors.New("category is required")
+	}
+	if input.Description == "" {
+		return 0, errors.New("description is required")
+	}
+	if input.Visibility != "hidden" && input.Visibility != "public" {
+		return 0, errors.New("invalid visibility")
+	}
+
+	result, err := s.db.ExecContext(ctx, `
+		insert into project_expenses (
+			project_id, category, description, vendor, reference, amount, currency,
+			visibility, is_voided, moderation_note, incurred_at, created_at, updated_at
+		)
+		select
+			id, ?, ?, ?, ?, ?, 'IDR',
+			?, 0, ?, ?, datetime('now'), datetime('now')
+		from projects
+		where id = ?
+	`, input.Category, input.Description, input.Vendor, input.Reference, input.Amount,
+		input.Visibility, input.ModerationNote, input.IncurredAt, input.ProjectID)
+	if err != nil {
+		return 0, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if rows == 0 {
+		return 0, sql.ErrNoRows
+	}
+	return result.LastInsertId()
+}
+
+func (s *Store) VoidProjectExpense(ctx context.Context, id int64, note string) error {
+	result, err := s.db.ExecContext(ctx, `
+		update project_expenses
+		set is_voided = 1,
+			visibility = 'hidden',
+			moderation_note = ?,
+			voided_at = datetime('now'),
+			updated_at = datetime('now')
+		where id = ? and is_voided = 0
+	`, strings.TrimSpace(note), id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) ListAdminProjectExpenses(ctx context.Context, limit int) ([]app.ProjectExpense, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		select
+			e.id,
+			e.project_id,
+			p.slug,
+			p.title,
+			e.category,
+			e.description,
+			e.vendor,
+			e.reference,
+			e.amount,
+			e.currency,
+			e.visibility,
+			e.is_voided,
+			coalesce(e.voided_at, ''),
+			e.moderation_note,
+			e.incurred_at,
+			e.created_at,
+			e.updated_at
+		from project_expenses e
+		join projects p on p.id = e.project_id
+		order by e.incurred_at desc, e.id desc
+		limit ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var expenses []app.ProjectExpense
+	for rows.Next() {
+		expense, err := scanExpense(rows)
+		if err != nil {
+			return nil, err
+		}
+		expenses = append(expenses, expense)
+	}
+	return expenses, rows.Err()
+}
+
+func scanExpense(scanner interface {
+	Scan(dest ...any) error
+}) (app.ProjectExpense, error) {
+	var expense app.ProjectExpense
+	var isVoided int
+	if err := scanner.Scan(
+		&expense.ID,
+		&expense.ProjectID,
+		&expense.ProjectSlug,
+		&expense.ProjectTitle,
+		&expense.Category,
+		&expense.Description,
+		&expense.Vendor,
+		&expense.Reference,
+		&expense.Amount,
+		&expense.Currency,
+		&expense.Visibility,
+		&isVoided,
+		&expense.VoidedAt,
+		&expense.ModerationNote,
+		&expense.IncurredAt,
+		&expense.CreatedAt,
+		&expense.UpdatedAt,
+	); err != nil {
+		return app.ProjectExpense{}, err
+	}
+	expense.IsVoided = isVoided == 1
+	expense.IncurredAt = displayJakartaDate(expense.IncurredAt)
+	expense.CreatedAt = displayJakartaTime(expense.CreatedAt)
+	expense.UpdatedAt = displayJakartaTime(expense.UpdatedAt)
+	expense.VoidedAt = displayJakartaTime(expense.VoidedAt)
+	return expense, nil
 }
 
 func scanDonation(scanner interface {
@@ -1147,6 +1410,24 @@ func (s *Store) migrate(ctx context.Context) error {
 			updated_at text not null
 		);
 
+		create table if not exists project_expenses (
+			id integer primary key autoincrement,
+			project_id integer not null references projects(id),
+			category text not null,
+			description text not null,
+			vendor text not null default '',
+			reference text not null default '',
+			amount integer not null,
+			currency text not null default 'IDR',
+			visibility text not null default 'public',
+			is_voided integer not null default 0,
+			voided_at text,
+			moderation_note text not null default '',
+			incurred_at text not null,
+			created_at text not null,
+			updated_at text not null
+		);
+
 		create table if not exists admin_login_tokens (
 			id integer primary key autoincrement,
 			email text not null,
@@ -1360,6 +1641,18 @@ func displayJakartaTime(value string) string {
 		return value
 	}
 	return t.In(jakartaLocation()).Format("2 Jan 2006 15:04 WIB")
+}
+
+func displayJakartaDate(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	t, err := time.Parse("2006-01-02 15:04:05", value)
+	if err != nil {
+		return value
+	}
+	return t.In(jakartaLocation()).Format("2 Jan 2006")
 }
 
 func jakartaLocation() *time.Location {

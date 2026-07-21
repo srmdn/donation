@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -217,6 +218,7 @@ func main() {
 			"progressMax":    progressMax,
 			"paragraphs":     descriptionParagraphs,
 			"eventHasAmount": eventHasAmount,
+			"sourceLabel":    sourceLabel,
 			"assetPath":      assetPath,
 		},
 	})
@@ -313,6 +315,41 @@ func main() {
 			slog.Error("render project", "error", err)
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}
+	})
+	mux.HandleFunc("GET /projects/{slug}/report", func(w http.ResponseWriter, r *http.Request) {
+		report, err := db.ProjectReport(r.Context(), r.PathValue("slug"))
+		if errors.Is(err, store.ErrNotFound()) {
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			slog.Error("load project report", "error", err, "slug", r.PathValue("slug"))
+			http.Error(w, "data load failed", http.StatusInternalServerError)
+			return
+		}
+		report.Meta = projectReportMeta(publicBaseURL, r, report.Project)
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := renderer.ExecuteTemplate(w, "project_report.html", report); err != nil {
+			slog.Error("render project report", "error", err)
+			http.Error(w, "render failed", http.StatusInternalServerError)
+		}
+	})
+	mux.HandleFunc("GET /projects/{slug}/report.csv", func(w http.ResponseWriter, r *http.Request) {
+		report, err := db.ProjectReport(r.Context(), r.PathValue("slug"))
+		if errors.Is(err, store.ErrNotFound()) {
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			slog.Error("load project report csv", "error", err, "slug", r.PathValue("slug"))
+			http.Error(w, "data load failed", http.StatusInternalServerError)
+			return
+		}
+		filename := report.Project.Slug + "-donation-report.csv"
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+		writeProjectReportCSV(w, report)
 	})
 	mux.HandleFunc("POST /donations", func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
@@ -825,6 +862,50 @@ func main() {
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}
 	})
+	mux.HandleFunc("GET /admin/reports", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(r.Context(), r, db) {
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+
+		projects, err := db.ListAllProjects(r.Context())
+		if err != nil {
+			slog.Error("list projects for admin reports", "error", err)
+			http.Error(w, "data load failed", http.StatusInternalServerError)
+			return
+		}
+		expenses, err := db.ListAdminProjectExpenses(r.Context(), 100)
+		if err != nil {
+			slog.Error("list admin project expenses", "error", err)
+			http.Error(w, "data load failed", http.StatusInternalServerError)
+			return
+		}
+
+		page := app.AdminReportsPageData{
+			Projects:         projects,
+			Expenses:         expenses,
+			Error:            popAdminReportFlash(w, r, adminCookieSecure, "error"),
+			Notice:           popAdminReportFlash(w, r, adminCookieSecure, "notice"),
+			ExpenseCategory:  strings.TrimSpace(r.URL.Query().Get("category")),
+			ExpenseDesc:      strings.TrimSpace(r.URL.Query().Get("description")),
+			ExpenseVendor:    strings.TrimSpace(r.URL.Query().Get("vendor")),
+			ExpenseReference: strings.TrimSpace(r.URL.Query().Get("reference")),
+			ExpenseAmount:    strings.TrimSpace(r.URL.Query().Get("amount")),
+			ExpenseNote:      strings.TrimSpace(r.URL.Query().Get("note")),
+			ExpenseIncurred:  time.Now().In(jakartaLocation()).Format("2006-01-02"),
+			CSRFToken:        csrfToken(w, r, adminSessionSecret, adminCookieSecure),
+		}
+		page.ExpenseProjectID, _ = strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("project_id")), 10, 64)
+		if incurred := strings.TrimSpace(r.URL.Query().Get("incurred_at")); incurred != "" {
+			page.ExpenseIncurred = incurred
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := renderer.ExecuteTemplate(w, "admin_reports.html", page); err != nil {
+			slog.Error("render admin reports", "error", err)
+			http.Error(w, "render failed", http.StatusInternalServerError)
+		}
+	})
 	mux.HandleFunc("GET /admin/donations", func(w http.ResponseWriter, r *http.Request) {
 		if !isAdmin(r.Context(), r, db) {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
@@ -1063,6 +1144,68 @@ func main() {
 			return
 		}
 		http.Redirect(w, r, "/admin/updates?notice="+url.QueryEscape("Project update saved"), http.StatusSeeOther)
+	})
+	mux.HandleFunc("POST /admin/expenses", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(r.Context(), r, db) {
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
+			return
+		}
+		input, err := projectExpenseInputFromRequest(r)
+		if err != nil {
+			redirectAdminReportWithExpenseError(w, r, adminCookieSecure, err.Error())
+			return
+		}
+		if _, err := db.CreateProjectExpense(r.Context(), input); err != nil {
+			slog.Error("create project expense", "error", err, "project_id", input.ProjectID)
+			setAdminReportFlash(w, adminCookieSecure, "error", "Expense create failed")
+			http.Redirect(w, r, "/admin/reports", http.StatusSeeOther)
+			return
+		}
+		setAdminReportFlash(w, adminCookieSecure, "notice", "Expense recorded")
+		http.Redirect(w, r, "/admin/reports", http.StatusSeeOther)
+	})
+	mux.HandleFunc("POST /admin/expenses/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(r.Context(), r, db) {
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id <= 0 {
+			http.Error(w, "invalid expense id", http.StatusBadRequest)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		if !requireCSRF(r, adminSessionSecret) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
+			return
+		}
+		if strings.TrimSpace(r.FormValue("action")) != "void" {
+			http.Error(w, "invalid action", http.StatusBadRequest)
+			return
+		}
+		if err := db.VoidProjectExpense(r.Context(), id, r.FormValue("moderation_note")); err != nil {
+			if errors.Is(err, store.ErrNotFound()) {
+				setAdminReportFlash(w, adminCookieSecure, "error", "Expense is already voided or missing")
+			} else {
+				slog.Error("void project expense", "error", err, "id", id)
+				setAdminReportFlash(w, adminCookieSecure, "error", "Expense void failed")
+			}
+			http.Redirect(w, r, "/admin/reports", http.StatusSeeOther)
+			return
+		}
+		setAdminReportFlash(w, adminCookieSecure, "notice", "Expense voided")
+		http.Redirect(w, r, "/admin/reports", http.StatusSeeOther)
 	})
 	mux.HandleFunc("POST /admin/donations/manual", func(w http.ResponseWriter, r *http.Request) {
 		if !isAdmin(r.Context(), r, db) {
@@ -1443,6 +1586,19 @@ func eventHasAmount(amount int) bool {
 	return amount > 0
 }
 
+func sourceLabel(source string) string {
+	switch strings.TrimSpace(source) {
+	case "pakasir":
+		return "QRIS Pakasir"
+	case "manual_transfer":
+		return "Transfer manual"
+	case "mock":
+		return "Mock"
+	default:
+		return "Donasi"
+	}
+}
+
 func descriptionParagraphs(text string) []string {
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	text = strings.TrimSpace(text)
@@ -1534,6 +1690,61 @@ func manualPaidAtFromRequest(raw string, now time.Time) (string, error) {
 	}
 	if value.After(now.In(jakartaLocation()).Add(time.Minute)) {
 		return "", errors.New("Paid time cannot be in the future")
+	}
+	return value.UTC().Format("2006-01-02 15:04:05"), nil
+}
+
+func projectExpenseInputFromRequest(r *http.Request) (app.ProjectExpenseInput, error) {
+	projectID, err := strconv.ParseInt(strings.TrimSpace(r.FormValue("project_id")), 10, 64)
+	if err != nil || projectID <= 0 {
+		return app.ProjectExpenseInput{}, errors.New("Project is required")
+	}
+	amount, err := strconv.Atoi(strings.TrimSpace(r.FormValue("amount")))
+	if err != nil || amount <= 0 {
+		return app.ProjectExpenseInput{}, errors.New("Amount must be a positive whole number")
+	}
+	incurredAt, err := expenseDateFromRequest(r.FormValue("incurred_at"), time.Now())
+	if err != nil {
+		return app.ProjectExpenseInput{}, err
+	}
+	category := strings.TrimSpace(r.FormValue("category"))
+	description := strings.TrimSpace(r.FormValue("description"))
+	vendor := strings.TrimSpace(r.FormValue("vendor"))
+	reference := strings.TrimSpace(r.FormValue("reference"))
+	note := strings.TrimSpace(r.FormValue("moderation_note"))
+	if category == "" {
+		return app.ProjectExpenseInput{}, errors.New("Category is required")
+	}
+	if description == "" {
+		return app.ProjectExpenseInput{}, errors.New("Description is required")
+	}
+	if len(category) > 100 || len(description) > 500 || len(vendor) > 200 || len(reference) > 200 || len(note) > 2000 {
+		return app.ProjectExpenseInput{}, errors.New("Expense field is too long")
+	}
+	visibility := "public"
+	if r.FormValue("visibility") == "hidden" {
+		visibility = "hidden"
+	}
+	return app.ProjectExpenseInput{
+		ProjectID:      projectID,
+		Category:       category,
+		Description:    description,
+		Vendor:         vendor,
+		Reference:      reference,
+		Amount:         amount,
+		Visibility:     visibility,
+		ModerationNote: note,
+		IncurredAt:     incurredAt,
+	}, nil
+}
+
+func expenseDateFromRequest(raw string, now time.Time) (string, error) {
+	value, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(raw), jakartaLocation())
+	if err != nil {
+		return "", errors.New("Expense date is invalid")
+	}
+	if value.After(now.In(jakartaLocation())) {
+		return "", errors.New("Expense date cannot be in the future")
 	}
 	return value.UTC().Format("2006-01-02 15:04:05"), nil
 }
@@ -1871,6 +2082,71 @@ func popAdminDonationFlash(w http.ResponseWriter, r *http.Request, secure bool, 
 	return strings.TrimSpace(value)
 }
 
+const (
+	adminReportNoticeCookie = "admin_reports_notice"
+	adminReportErrorCookie  = "admin_reports_error"
+)
+
+func setAdminReportFlash(w http.ResponseWriter, secure bool, kind, value string) {
+	name := adminReportNoticeCookie
+	if kind == "error" {
+		name = adminReportErrorCookie
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     name,
+		Value:    url.QueryEscape(strings.TrimSpace(value)),
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   20,
+	})
+}
+
+func popAdminReportFlash(w http.ResponseWriter, r *http.Request, secure bool, kind string) string {
+	name := adminReportNoticeCookie
+	if kind == "error" {
+		name = adminReportErrorCookie
+	}
+	cookie, err := r.Cookie(name)
+	if err != nil {
+		return ""
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     name,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
+	value, err := url.QueryUnescape(cookie.Value)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+func redirectAdminReportWithExpenseError(w http.ResponseWriter, r *http.Request, secure bool, message string) {
+	setAdminReportFlash(w, secure, "error", message)
+	values := url.Values{}
+	for _, key := range []string{"project_id", "category", "description", "vendor", "reference", "amount", "incurred_at"} {
+		value := strings.TrimSpace(r.FormValue(key))
+		if value != "" {
+			values.Set(key, value)
+		}
+	}
+	if note := strings.TrimSpace(r.FormValue("moderation_note")); note != "" {
+		values.Set("note", note)
+	}
+	target := "/admin/reports"
+	if encoded := values.Encode(); encoded != "" {
+		target += "?" + encoded
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
 func isDevelopmentEnv(appEnv string) bool {
 	return strings.EqualFold(strings.TrimSpace(appEnv), "development")
 }
@@ -1958,6 +2234,35 @@ func projectMeta(publicBaseURL string, r *http.Request, builder app.Builder, pro
 		SiteName:     "donate.srmdn.com",
 		Type:         "website",
 	}
+}
+
+func projectReportMeta(publicBaseURL string, r *http.Request, project app.Project) app.MetaData {
+	baseURL := canonicalBaseURL(publicBaseURL, r)
+	return app.MetaData{
+		Title:        "Report " + project.Title + " - donate.srmdn.com",
+		Description:  "Laporan pemasukan, pengeluaran, dan saldo untuk proyek " + project.Title + ".",
+		CanonicalURL: absoluteURL(baseURL, "/projects/"+project.Slug+"/report"),
+		ImageURL:     absoluteURL(baseURL, staticAssetPath("og-default.png")),
+		SiteName:     "donate.srmdn.com",
+		Type:         "website",
+	}
+}
+
+func writeProjectReportCSV(w io.Writer, report app.ProjectReportPageData) {
+	writer := csv.NewWriter(w)
+	_ = writer.Write([]string{"project", report.Project.Title})
+	_ = writer.Write([]string{"total_income", strconv.Itoa(report.TotalIncome)})
+	_ = writer.Write([]string{"total_expenses", strconv.Itoa(report.TotalExpenses)})
+	_ = writer.Write([]string{"balance", strconv.Itoa(report.Balance)})
+	_ = writer.Write(nil)
+	_ = writer.Write([]string{"type", "date", "category_or_source", "description", "amount", "reference"})
+	for _, entry := range report.Income {
+		_ = writer.Write([]string{"income", entry.PaidAt, sourceLabel(entry.SettlementSource), entry.DonorName, strconv.Itoa(entry.Amount), ""})
+	}
+	for _, expense := range report.Expenses {
+		_ = writer.Write([]string{"expense", expense.IncurredAt, expense.Category, expense.Description, strconv.Itoa(expense.Amount), expense.Reference})
+	}
+	writer.Flush()
 }
 
 func canonicalBaseURL(publicBaseURL string, r *http.Request) string {
