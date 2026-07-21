@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {{template "meta_tags" .}}
+  <link rel="stylesheet" href="{{assetPath "base.css"}}">
+  <link rel="stylesheet" href="{{assetPath "public.css"}}">
+</head>
+<body>
+  {{template "site_nav" .}}
+  <main class="not-found-shell">
+    <section class="not-found-panel" aria-labelledby="not-found-title">
+      <div class="not-found-mark" aria-hidden="true">
+        <span>404</span>
+      </div>
+      <h1 id="not-found-title">Halaman tidak ditemukan</h1>
+      <p class="bio">Link mungkin sudah berubah atau tidak tersedia. Kamu bisa kembali ke halaman donasi utama dan memilih proyek yang masih aktif.</p>
+      <div class="not-found-actions">
+        <a class="primary-link" href="/">Kembali ke Donasi</a>
+        <a class="secondary-link" href="/projects">Lihat Projects</a>
+      </div>
+    </section>
+  </main>
+  {{template "site_footer" .}}
+</body>
+</html>
