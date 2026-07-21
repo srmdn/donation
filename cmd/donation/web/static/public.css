@@ -702,6 +702,58 @@
   min-width: 132px;
 }
 
+.not-found-shell {
+  display: grid;
+  min-height: calc(100dvh - 193px);
+  width: min(100% - 48px, 760px);
+  margin: 0 auto;
+  padding: 72px 0 64px;
+  place-items: center;
+}
+
+.not-found-panel {
+  width: 100%;
+  text-align: center;
+}
+
+.not-found-mark {
+  display: grid;
+  width: 112px;
+  height: 112px;
+  margin: 0 auto 26px;
+  place-items: center;
+  border: 1px solid rgba(47, 125, 92, 0.24);
+  border-radius: 50%;
+  background:
+    linear-gradient(135deg, rgba(219, 234, 223, 0.9), rgba(255, 255, 255, 0.72)),
+    var(--surface);
+  box-shadow: var(--shadow);
+  color: var(--accent);
+}
+
+.not-found-mark span {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.not-found-panel h1 {
+  font-size: clamp(36px, 7vw, 64px);
+}
+
+.not-found-panel .bio {
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.not-found-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 28px;
+  flex-wrap: wrap;
+}
+
 @keyframes pulse {
   0%,
   100% {
@@ -756,7 +808,8 @@
 
   .shell,
   .detail-shell,
-  .projects-shell {
+  .projects-shell,
+  .not-found-shell {
     width: min(100% - 32px, 680px);
   }
 
