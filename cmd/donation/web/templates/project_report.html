@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="id">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -11,52 +11,52 @@
   {{template "site_nav" .}}
   <main class="detail-shell report-shell">
     <nav class="top-nav" aria-label="Breadcrumb">
-      <a href="/projects/{{.Project.Slug}}">Back to {{.Project.Title}}</a>
-      <a href="/projects/{{.Project.Slug}}/report.csv">Download CSV</a>
+      <a href="/projects/{{.Project.Slug}}">Kembali ke {{.Project.Title}}</a>
+      <a href="/projects/{{.Project.Slug}}/report.csv">Unduh CSV</a>
     </nav>
 
     <section class="project-hero accent-{{.Project.Accent}}">
       <div>
-        <p class="eyebrow">Transparency report</p>
+        <p class="eyebrow">Laporan transparansi</p>
         <h1>{{.Project.Title}}</h1>
-        <p class="lede">Laporan pemasukan, pengeluaran, dan saldo proyek. Donasi Orang Baik tetap dihitung sebagai pemasukan tanpa membuka identitas donatur.</p>
+        <p class="lede">Laporan donasi terverifikasi, pengeluaran, dan saldo tersisa. Donasi dari &quot;Orang Baik&quot; tetap dihitung tanpa menampilkan nama atau pesan donatur.</p>
       </div>
 
       <aside class="funding-panel" aria-label="Saldo proyek">
         <span class="panel-label">Saldo saat ini</span>
         <strong>{{rupiah .Balance}}</strong>
-        <p>{{rupiah .TotalIncome}} masuk, {{rupiah .TotalExpenses}} dipakai.</p>
+        <p>{{rupiah .TotalIncome}} donasi masuk, {{rupiah .TotalExpenses}} pengeluaran publik.</p>
       </aside>
     </section>
 
     <section class="report-summary" aria-label="Ringkasan laporan">
       <div>
-        <span class="stat-label">Pemasukan</span>
+        <span class="stat-label">Donasi masuk</span>
         <strong>{{rupiah .TotalIncome}}</strong>
-        <p>{{.DonationCount}} donasi bersih.</p>
+        <p>{{.DonationCount}} donasi sudah terverifikasi.</p>
       </div>
       <div>
         <span class="stat-label">Pengeluaran</span>
         <strong>{{rupiah .TotalExpenses}}</strong>
-        <p>{{.ExpenseCount}} transaksi publik.</p>
+        <p>{{.ExpenseCount}} pengeluaran publik tercatat.</p>
       </div>
       <div>
         <span class="stat-label">Saldo</span>
         <strong>{{rupiah .Balance}}</strong>
-        <p>Dihitung dari pemasukan dikurangi pengeluaran.</p>
+        <p>Donasi masuk setelah dikurangi pengeluaran publik.</p>
       </div>
     </section>
 
     {{if .HasPrivateIncome}}
-      <p class="report-note">Sebagian donasi dicatat sebagai Orang Baik. Nominal masuk ke laporan, identitas dan pesan donatur tidak ditampilkan.</p>
+      <p class="report-note">Ada donasi dari &quot;Orang Baik&quot;. Nominalnya tetap dihitung, tapi nama dan pesannya disembunyikan.</p>
     {{end}}
 
     <section class="report-grid">
       <section aria-label="Pemasukan donasi">
         <div class="section-heading compact">
           <div>
-            <p class="eyebrow">Income</p>
-            <h2>Donasi masuk</h2>
+            <p class="eyebrow">Donasi</p>
+            <h2>Donasi terverifikasi</h2>
           </div>
         </div>
 
@@ -73,7 +73,7 @@
               <strong class="amount">{{rupiah .Amount}}</strong>
             </article>
           {{else}}
-            <p class="report-empty">Belum ada donasi paid untuk proyek ini.</p>
+            <p class="report-empty">Belum ada donasi terverifikasi.</p>
           {{end}}
         </div>
       </section>
@@ -81,7 +81,7 @@
       <section aria-label="Pengeluaran proyek">
         <div class="section-heading compact">
           <div>
-            <p class="eyebrow">Expenses</p>
+            <p class="eyebrow">Biaya</p>
             <h2>Pengeluaran</h2>
           </div>
         </div>
@@ -101,7 +101,7 @@
               <strong class="amount expense">{{rupiah .Amount}}</strong>
             </article>
           {{else}}
-            <p class="report-empty">Belum ada pengeluaran publik untuk proyek ini.</p>
+            <p class="report-empty">Belum ada pengeluaran publik.</p>
           {{end}}
         </div>
       </section>

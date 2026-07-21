@@ -2239,8 +2239,8 @@ func projectMeta(publicBaseURL string, r *http.Request, builder app.Builder, pro
 func projectReportMeta(publicBaseURL string, r *http.Request, project app.Project) app.MetaData {
 	baseURL := canonicalBaseURL(publicBaseURL, r)
 	return app.MetaData{
-		Title:        "Report " + project.Title + " - donate.srmdn.com",
-		Description:  "Laporan pemasukan, pengeluaran, dan saldo untuk proyek " + project.Title + ".",
+		Title:        "Laporan " + project.Title + " - donate.srmdn.com",
+		Description:  "Laporan donasi terverifikasi, pengeluaran, dan saldo tersisa untuk proyek " + project.Title + ".",
 		CanonicalURL: absoluteURL(baseURL, "/projects/"+project.Slug+"/report"),
 		ImageURL:     absoluteURL(baseURL, staticAssetPath("og-default.png")),
 		SiteName:     "donate.srmdn.com",
