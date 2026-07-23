@@ -392,7 +392,7 @@ func main() {
 			return
 		}
 		if project.DeadlineEnded {
-			http.Error(w, "periode dukungan untuk proyek ini sudah berakhir", http.StatusBadRequest)
+			http.Error(w, "masa dukungan untuk proyek ini telah berakhir", http.StatusBadRequest)
 			return
 		}
 		amount, err := donationAmountFromRequest(r)
@@ -2263,7 +2263,7 @@ func notFoundMeta(publicBaseURL string, r *http.Request) app.MetaData {
 	baseURL := canonicalBaseURL(publicBaseURL, r)
 	return app.MetaData{
 		Title:        "Halaman tidak ditemukan - donate.srmdn.com",
-		Description:  "Link mungkin sudah berubah atau tidak tersedia. Kembali ke halaman donasi utama.",
+		Description:  "Link mungkin sudah berubah atau tidak tersedia. Kembali ke halaman utama.",
 		CanonicalURL: absoluteURL(baseURL, r.URL.Path),
 		ImageURL:     absoluteURL(baseURL, staticAssetPath("og-default.png")),
 		SiteName:     "donate.srmdn.com",

@@ -17,7 +17,7 @@
 
     <section class="project-hero accent-{{.Project.Accent}}">
       <div>
-        <p class="eyebrow">Laporan transparansi</p>
+        <p class="eyebrow">Laporan keuangan</p>
         <h1>{{.Project.Title}}</h1>
         <p class="lede">Laporan donasi terverifikasi, pengeluaran, dan saldo tersisa. Donasi dari &quot;Orang Baik&quot; tetap dihitung tanpa menampilkan nama atau pesan donatur.</p>
       </div>
@@ -25,7 +25,7 @@
       <aside class="funding-panel" aria-label="Saldo proyek">
         <span class="panel-label">Saldo saat ini</span>
         <strong>{{rupiah .Balance}}</strong>
-        <p>{{rupiah .TotalIncome}} donasi masuk, {{rupiah .TotalExpenses}} pengeluaran publik.</p>
+        <p>{{rupiah .TotalIncome}} donasi masuk, {{rupiah .TotalExpenses}} pengeluaran.</p>
       </aside>
     </section>
 
@@ -38,12 +38,12 @@
       <div>
         <span class="stat-label">Pengeluaran</span>
         <strong>{{rupiah .TotalExpenses}}</strong>
-        <p>{{.ExpenseCount}} pengeluaran publik tercatat.</p>
+        <p>{{.ExpenseCount}} pengeluaran tercatat.</p>
       </div>
       <div>
         <span class="stat-label">Saldo</span>
         <strong>{{rupiah .Balance}}</strong>
-        <p>Donasi masuk setelah dikurangi pengeluaran publik.</p>
+        <p>Donasi masuk setelah dikurangi pengeluaran.</p>
       </div>
     </section>
 
@@ -101,7 +101,7 @@
               <strong class="amount expense">{{rupiah .Amount}}</strong>
             </article>
           {{else}}
-            <p class="report-empty">Belum ada pengeluaran publik.</p>
+            <p class="report-empty">Belum ada pengeluaran.</p>
           {{end}}
         </div>
       </section>
