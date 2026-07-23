@@ -36,7 +36,7 @@ func DeadlineStatus(deadlineDate string, now time.Time) (string, bool) {
 
 	switch {
 	case daysLeft < 0:
-		return "Pendanaan berakhir", true
+		return "Telah berakhir", true
 	case daysLeft == 0:
 		return "Berakhir hari ini", false
 	default:

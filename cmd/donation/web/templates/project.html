@@ -27,7 +27,7 @@
         <strong>{{rupiah .Project.Raised}}</strong>
         <span>dari {{rupiah .Project.Goal}}</span>
         <progress class="meter" aria-label="Progress pendanaan proyek" value="{{.Project.Raised}}" max="{{progressMax .Project.Goal}}">{{percent .Project.Raised .Project.Goal}}%</progress>
-        <p>{{percent .Project.Raised .Project.Goal}} persen tercapai.</p>
+        <p>{{percent .Project.Raised .Project.Goal}}% terkumpul.</p>
         {{if .Project.DeadlineText}}
           <p class="deadline-note {{if .Project.DeadlineEnded}}ended{{end}}">{{.Project.DeadlineText}}</p>
         {{end}}
@@ -38,10 +38,10 @@
       <div class="story-head">
         <div>
           <p class="eyebrow">Detail</p>
-          <h2>Konteks proyek</h2>
+          <h2>Tentang proyek</h2>
         </div>
         <div class="project-meta-note" aria-label="Pembaruan proyek">
-          <span>Proyek terakhir diperbarui</span>
+          <span>Terakhir diperbarui</span>
           <strong>{{.Project.LastUpdated}}</strong>
         </div>
       </div>
@@ -70,7 +70,7 @@
         <section class="donation-form donation-closed" aria-label="Pendanaan selesai">
           <div class="form-heading">
             <p class="eyebrow">Pendanaan selesai</p>
-            <h2>Periode dukungan sudah berakhir.</h2>
+            <h2>Masa dukungan telah berakhir.</h2>
           </div>
           <p>Halaman proyek tetap bisa diakses untuk melihat progres, pembaruan, dan riwayat dukungan yang sudah masuk.</p>
         </section>
@@ -81,11 +81,11 @@
 
           <div class="form-heading">
             <p class="eyebrow">Dukung proyek ini</p>
-            <h2>Pilih nominal.</h2>
+            <h2>Pilih nominal donasi</h2>
           </div>
 
           <fieldset class="amount-grid">
-            <legend>Nominal rekomendasi</legend>
+            <legend>Nominal yang disarankan</legend>
             <label>
               <input type="radio" name="amount" value="25000" checked>
               <span>Rp 25.000</span>
@@ -101,35 +101,35 @@
           </fieldset>
 
           <label class="field">
-            <span>Nominal custom</span>
+            <span>Nominal lain</span>
             <input name="custom_amount" type="number" min="25000" step="1000" inputmode="numeric" placeholder="25000">
-            <small>Kosongkan jika ingin memakai nominal rekomendasi. Minimum donasi adalah Rp25.000.</small>
+            <small>Kosongkan jika ingin memakai nominal yang disarankan. Minimum donasi adalah Rp25.000.</small>
           </label>
 
           <label class="field">
             <span>Nama</span>
             <input name="name" autocomplete="name" placeholder="Nama Anda">
-            <small>Opsional. Jika kosong, akan tampil sebagai Orang Baik.</small>
+            <small>Boleh dikosongkan. Jika kosong, akan tampil sebagai Orang Baik.</small>
           </label>
 
           <label class="field">
             <span>Email</span>
             <input name="email" type="email" autocomplete="email" placeholder="nama@email.com" required>
-            <small>Wajib. Digunakan untuk notifikasi perkembangan proyek dan tidak ditampilkan ke publik.</small>
+            <small>Harus diisi. Digunakan untuk notifikasi perkembangan proyek dan tidak ditampilkan ke publik.</small>
           </label>
 
           <label class="field">
             <span>Pesan</span>
             <textarea name="message" rows="4" placeholder="Pesan dukungan Anda"></textarea>
-            <small>Opsional.</small>
+            <small>Boleh dikosongkan.</small>
           </label>
 
-          <button class="primary-button" type="submit">Lanjut ke pembayaran</button>
+          <button class="primary-button" type="submit">Lanjutkan ke pembayaran</button>
         </form>
       {{end}}
 
-      <aside id="timeline" class="timeline-preview" aria-label="Aktivitas proyek">
-        <p class="eyebrow">Aktivitas terbaru</p>
+      <aside id="timeline" class="timeline-preview" aria-label="Perkembangan proyek">
+        <p class="eyebrow">Terbaru</p>
         <ol class="timeline">
           {{range .Timeline}}
             <li class="timeline-item event-{{.Kind}}">
@@ -151,7 +151,7 @@
 
         {{if .TimelineHasMore}}
           <div class="timeline-actions">
-            <a class="secondary-link inline-action" href="/projects/{{.Project.Slug}}?timeline_limit={{.TimelineNextLimit}}#timeline">Lihat lebih banyak</a>
+            <a class="secondary-link inline-action" href="/projects/{{.Project.Slug}}?timeline_limit={{.TimelineNextLimit}}#timeline">Selengkapnya</a>
           </div>
         {{end}}
       </aside>
